@@ -116,6 +116,7 @@ Deno.test("model has all expected methods", () => {
     "resolve_mr_discussion",
     "retry_job",
     "retry_pipeline",
+    "search",
     "set_issue_assignees",
     "set_mr_assignees",
     "set_mr_reviewers",
@@ -172,6 +173,7 @@ Deno.test("model has all expected resources", () => {
     "repositoryTree",
     "retryResult",
     "reviewerRemovalResult",
+    "searchResults",
     "snippetDeleted",
     "snippetDetail",
     "snippetList",
@@ -4752,6 +4754,141 @@ Deno.test("list_repository_tree reports truncated when the page cap is hit", asy
     assertEquals(d.entries.length, 20);
   } finally {
     globalThis.fetch = original;
+  }
+});
+
+const SEARCH_DEFAULTS = {
+  scope: "blobs" as const,
+  project: "",
+  group: "",
+  ref: "",
+  state: "" as const,
+  limit: 100,
+};
+
+Deno.test("search hits the project search endpoint with ref and state", async () => {
+  const pid = encodeURIComponent("group/proj");
+  const restore = mockFetch({
+    [`GET /api/v4/projects/${pid}/search?scope=issues&search=TypeORM&per_page=100&page=1&state=opened`]:
+      {
+        status: 200,
+        body: [{ iid: 7, title: "TypeORM where", state: "opened" }],
+      },
+  });
+  try {
+    const { context, getWrittenResources } = createModelTestContext({
+      globalArgs: TEST_GLOBAL_ARGS,
+    });
+    await model.methods.search.execute(
+      {
+        ...SEARCH_DEFAULTS,
+        query: "TypeORM",
+        scope: "issues",
+        project: "group/proj",
+        state: "opened",
+      },
+      context as any,
+    );
+    const d = getWrittenResources().find((x) => x.specName === "searchResults")!
+      .data as any;
+    assertEquals(d.count, 1);
+    assertEquals(d.results[0].iid, 7);
+    assertEquals(d.project, "group/proj");
+    assertEquals(d.group, null);
+    assertEquals(d.state, "opened");
+    assertEquals(d.truncated, false);
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("search hits the group and instance search endpoints", async () => {
+  const gid = encodeURIComponent("parent/child");
+  const restore = mockFetch({
+    [`GET /api/v4/groups/${gid}/search?scope=projects&search=api&per_page=100&page=1`]:
+      { status: 200, body: [{ id: 1 }] },
+    [`GET /api/v4/search?scope=users&search=alice&per_page=100&page=1`]: {
+      status: 200,
+      body: [{ id: 2 }, { id: 3 }],
+    },
+  });
+  try {
+    const { context, getWrittenResources } = createModelTestContext({
+      globalArgs: TEST_GLOBAL_ARGS,
+    });
+    await model.methods.search.execute(
+      {
+        ...SEARCH_DEFAULTS,
+        query: "api",
+        scope: "projects",
+        group: "parent/child",
+      },
+      context as any,
+    );
+    await model.methods.search.execute(
+      { ...SEARCH_DEFAULTS, query: "alice", scope: "users" },
+      context as any,
+    );
+    const counts = getWrittenResources()
+      .filter((x) => x.specName === "searchResults")
+      .map((x) => (x.data as any).count);
+    assertEquals(counts, [1, 2]);
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("search follows x-next-page and stops at limit with truncated", async () => {
+  const pid = encodeURIComponent("group/proj");
+  const page = (n: number) =>
+    Array.from({ length: 100 }, (_, i) => ({ id: n * 100 + i }));
+  const restore = mockFetch({
+    [`GET /api/v4/projects/${pid}/search?scope=blobs&search=foo&per_page=100&page=1`]:
+      { status: 200, headers: { "x-next-page": "2" }, body: page(0) },
+    [`GET /api/v4/projects/${pid}/search?scope=blobs&search=foo&per_page=100&page=2`]:
+      { status: 200, headers: { "x-next-page": "3" }, body: page(1) },
+  });
+  try {
+    const { context, getWrittenResources } = createModelTestContext({
+      globalArgs: TEST_GLOBAL_ARGS,
+    });
+    await model.methods.search.execute(
+      { ...SEARCH_DEFAULTS, query: "foo", project: "group/proj", limit: 150 },
+      context as any,
+    );
+    const d = getWrittenResources().find((x) => x.specName === "searchResults")!
+      .data as any;
+    assertEquals(d.count, 150);
+    assertEquals(d.truncated, true);
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("search rejects invalid argument combinations without calling GitLab", async () => {
+  const restore = mockFetch({});
+  try {
+    const { context } = createModelTestContext({
+      globalArgs: TEST_GLOBAL_ARGS,
+    });
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ project: "a/b", group: "a" }, "not both"],
+      [{ ref: "main" }, "ref requires project"],
+      [{ scope: "blobs", state: "opened" }, "state only applies"],
+    ];
+    for (const [overrides, message] of cases) {
+      await assertRejects(
+        () =>
+          model.methods.search.execute(
+            { ...SEARCH_DEFAULTS, query: "x", ...overrides } as any,
+            context as any,
+          ),
+        Error,
+        message,
+      );
+    }
+  } finally {
+    restore();
   }
 });
 
