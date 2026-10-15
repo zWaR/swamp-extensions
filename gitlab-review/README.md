@@ -49,6 +49,7 @@ globalArguments:
 | `unapprove_mr`      | Remove approval (request changes)                    | `project`, `iid`                                                        |
 | `post_review`       | Post draft as comment, optionally approve            | `project`, `iid`, `action?`                                             |
 | `post_line_comment` | Post a comment positioned on a file/line in the diff | `project`, `iid`, `body`, `newPath`, `newLine?`, `oldPath?`, `oldLine?` |
+| `post_discussion` | Open a general resolvable thread, not tied to a file/line | `project`, `iid`, `body` |
 
 The `action` parameter on `post_review` accepts: `comment` (default), `approve`,
 or `request_changes`.

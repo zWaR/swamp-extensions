@@ -29,6 +29,7 @@ Deno.test("model has all expected methods", () => {
     "approve_mr",
     "edit_draft",
     "get_mr_diff",
+    "post_discussion",
     "post_line_comment",
     "post_review",
     "unapprove_mr",
@@ -39,6 +40,7 @@ Deno.test("model has all expected methods", () => {
 Deno.test("model has all expected resources", () => {
   const resourceNames = Object.keys(model.resources);
   assertEquals(resourceNames.sort(), [
+    "discussionThread",
     "inlineReview",
     "lineComment",
     "mrDiff",
@@ -1072,4 +1074,116 @@ Deno.test("post_line_comment rejects closed MR", async () => {
   } finally {
     restore();
   }
+});
+
+// =============================================================================
+// post_discussion
+// =============================================================================
+
+Deno.test("post_discussion opens an unpositioned thread", async () => {
+  let postedBody: Record<string, unknown> | undefined;
+  const original = globalThis.fetch;
+  globalThis.fetch = (input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === "string"
+      ? input
+      : input instanceof URL
+      ? input.toString()
+      : (input as Request).url;
+    if (
+      init?.method === "POST" &&
+      url.endsWith("/projects/group%2Frepo/merge_requests/1/discussions")
+    ) {
+      postedBody = JSON.parse(String(init.body));
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ id: "thread123", notes: [{ id: 777 }] }),
+          { status: 201, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+    return Promise.resolve(new Response("Not Found", { status: 404 }));
+  };
+
+  const { context, getWrittenResources } = createModelTestContext({
+    globalArgs: { host: "gitlab.example.com", token: "test-token" },
+    storedResources: {
+      [`mrDiff-${encodeURIComponent("group/repo")}-1`]: OPENED_MR_DIFF,
+    },
+  });
+
+  try {
+    await model.methods.post_discussion.execute(
+      { project: "group/repo", iid: 1, body: "please update the docs" },
+      context as any,
+    );
+    assertEquals(postedBody, { body: "please update the docs" });
+    const resources = getWrittenResources();
+    assertEquals(resources.length, 1);
+    const data = resources[0].data as any;
+    assertEquals(data.discussionId, "thread123");
+    assertEquals(data.noteId, 777);
+    assertEquals(data.body, "please update the docs");
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+Deno.test("post_discussion skips a body it already posted", async () => {
+  let posts = 0;
+  const original = globalThis.fetch;
+  globalThis.fetch = () => {
+    posts++;
+    return Promise.resolve(new Response("unexpected", { status: 500 }));
+  };
+
+  const body = "already posted";
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(body),
+  );
+  const bodyKey = Array.from(new Uint8Array(digest).slice(0, 8))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  const { context, getWrittenResources } = createModelTestContext({
+    globalArgs: { host: "gitlab.example.com", token: "test-token" },
+    storedResources: {
+      [`mrDiff-${encodeURIComponent("group/repo")}-1`]: OPENED_MR_DIFF,
+      [`discussionThread-${encodeURIComponent("group/repo")}-1-${bodyKey}`]: {
+        discussionId: "thread123",
+      },
+    },
+  });
+
+  try {
+    await model.methods.post_discussion.execute(
+      { project: "group/repo", iid: 1, body },
+      context as any,
+    );
+    assertEquals(posts, 0);
+    assertEquals(getWrittenResources().length, 0);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+Deno.test("post_discussion refuses a closed MR", async () => {
+  const { context } = createModelTestContext({
+    globalArgs: { host: "gitlab.example.com", token: "test-token" },
+    storedResources: {
+      [`mrDiff-${encodeURIComponent("group/repo")}-1`]: {
+        ...OPENED_MR_DIFF,
+        state: "merged",
+      },
+    },
+  });
+
+  await assertRejects(
+    () =>
+      model.methods.post_discussion.execute(
+        { project: "group/repo", iid: 1, body: "late" },
+        context as any,
+      ),
+    Error,
+    "is merged",
+  );
 });

@@ -113,6 +113,24 @@ const LineCommentSchema = z.object({
   ),
 });
 
+const DiscussionThreadSchema = z.object({
+  project: z.string().describe("Project the merge request belongs to"),
+  iid: z.number().describe("Merge request IID"),
+  discussionId: z.string().describe("GitLab discussion ID the thread opened"),
+  noteId: z.number().describe("ID of the thread's first note"),
+  body: z.string().describe("Thread body as posted"),
+  postedAt: z.string().describe("Timestamp the thread was posted"),
+  fetchedAt: z.string().optional().describe(
+    "ISO 8601 timestamp when data was fetched",
+  ),
+  durationMs: z.number().optional().describe(
+    "Method execution duration in milliseconds",
+  ),
+  collectedBy: z.string().optional().describe(
+    "Extension that collected this data",
+  ),
+});
+
 // =============================================================================
 // Helpers
 // =============================================================================
@@ -323,7 +341,7 @@ mutation updateNote($id: NoteID!, $body: String!) {
 /** GitLab MR review model — fetch diffs, draft reviews, post comments via GraphQL (REST fallback for diffs & approvals). */
 export const model = {
   type: "@webframp/gitlab-review",
-  version: "2026.10.14.1",
+  version: "2026.10.15.1",
   globalArguments: GlobalArgsSchema,
   upgrades: [
     {
@@ -414,6 +432,12 @@ export const model = {
         "No schema changes — manifest now declares license: Apache-2.0 (SPDX)",
       upgradeAttributes: (old: Record<string, unknown>) => old,
     },
+    {
+      toVersion: "2026.10.15.1",
+      description:
+        "Additive: discussionThread resource and post_discussion method",
+      upgradeAttributes: (old: Record<string, unknown>) => old,
+    },
   ],
   resources: {
     mrDiff: {
@@ -437,6 +461,13 @@ export const model = {
     lineComment: {
       description: "Record of a diff-positioned line comment",
       schema: LineCommentSchema,
+      lifetime: "30d" as const,
+      garbageCollection: 20,
+    },
+    discussionThread: {
+      description:
+        "Record of a general (not diff-positioned) discussion thread",
+      schema: DiscussionThreadSchema,
       lifetime: "30d" as const,
       garbageCollection: 20,
     },
@@ -1046,6 +1077,95 @@ export const model = {
           newPath: args.newPath,
           newLine: args.newLine ?? null,
           oldLine: args.oldLine ?? null,
+        });
+        return { dataHandles: [handle] };
+      },
+    },
+
+    post_discussion: {
+      description:
+        "Open a general resolvable discussion thread on an MR, not anchored to a file or " +
+        "line (GitLab REST discussions API, no position). Skips re-posting when the same " +
+        "body was already posted as a thread by this method.",
+      arguments: z.object({
+        project: z.string().min(1).describe("Project path"),
+        iid: z.number().int().positive().describe("Merge request IID"),
+        body: z.string().min(1).describe("Thread body (markdown)"),
+      }),
+      execute: async (
+        args: { project: string; iid: number; body: string },
+        context: ModelContext,
+      ) => {
+        const startMs = Date.now();
+        // Keyed by a body hash — an MR can carry many threads, and re-running
+        // the same post must not open a duplicate.
+        const digest = await crypto.subtle.digest(
+          "SHA-256",
+          new TextEncoder().encode(args.body),
+        );
+        const bodyKey = Array.from(new Uint8Array(digest).slice(0, 8))
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("");
+        const name = `${
+          instanceName("discussionThread", args.project, args.iid)
+        }-${bodyKey}`;
+
+        const previous = await context.readResource(name);
+        if (previous?.discussionId) {
+          context.logger.info("Discussion thread already posted, skipping", {
+            project: args.project,
+            iid: args.iid,
+            discussionId: previous.discussionId,
+          });
+          return { dataHandles: [] };
+        }
+
+        await assertMrOpen(context, args.project, args.iid);
+        const { host, token } = context.globalArgs;
+        const pid = encodeProject(args.project);
+
+        const discussionResp = await contextFetch(
+          `post_discussion ${args.project}!${args.iid}`,
+          host,
+          token,
+          `/projects/${pid}/merge_requests/${args.iid}/discussions`,
+          { method: "POST", body: JSON.stringify({ body: args.body }) },
+        );
+        let discussion: any;
+        try {
+          discussion = await discussionResp.json();
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new Error(
+            `post_discussion ${args.project}!${args.iid}: response was not valid JSON: ${msg}`,
+            { cause: err },
+          );
+        }
+        const note = Array.isArray(discussion?.notes)
+          ? discussion.notes[0]
+          : undefined;
+        if (!discussion?.id || !note?.id) {
+          throw new Error(
+            `post_discussion ${args.project}!${args.iid}: unexpected discussion response`,
+          );
+        }
+
+        const now = new Date().toISOString();
+        const handle = await context.writeResource("discussionThread", name, {
+          project: args.project,
+          iid: args.iid,
+          discussionId: String(discussion.id),
+          noteId: note.id,
+          body: args.body,
+          postedAt: now,
+          fetchedAt: now,
+          durationMs: Date.now() - startMs,
+          collectedBy: EXTENSION_NAME,
+        });
+        context.logger.info("Posted discussion thread", {
+          project: args.project,
+          iid: args.iid,
+          discussionId: String(discussion.id),
         });
         return { dataHandles: [handle] };
       },
