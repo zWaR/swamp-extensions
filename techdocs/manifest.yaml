@@ -1,0 +1,64 @@
+manifestVersion: 1
+name: "@cachehit/techdocs"
+license: Apache-2.0
+version: "2026.10.23.1"
+description: |
+  Search and AI context building for a Hugo documentation site (Docsy or any
+  other theme), read from its source repository in GitLab or a local checkout.
+  It doesn't need access to the published site, so it also works for sites
+  behind single sign-on.
+
+  `sync` downloads the content directory as one archive. It parses YAML or
+  TOML front matter and splits each page into sections at H1/H2 headings.
+  Drafts, `exclude_search: true` pages and unrendered pages are left out.
+  Links follow Hugo's URL rules: pretty or `uglyURLs`, `url` and `slug` front
+  matter, and custom output formats. The other methods re-sync on their own
+  when the branch head has moved.
+
+  ## Quick Start
+
+  ```bash
+  swamp extension pull @cachehit/techdocs
+
+  # Store a GitLab token with read_repository scope (prompts for the value)
+  swamp vault create local_encryption docs   # once, if you have no vault yet
+  swamp vault put docs GITLAB_TOKEN
+
+  swamp model create @cachehit/techdocs docs \
+    --global-arg siteUrl=https://docs.example.com \
+    --global-arg host=gitlab.example.com \
+    --global-arg project=group/docs \
+    --global-arg 'token=${{ vault.get("docs", "GITLAB_TOKEN") }}'
+
+  swamp model method run docs search --input query="rollback a deployment"
+  swamp model method run docs build_context --input query="on-call handover"
+  ```
+
+  ## Methods
+
+  - **sync**: download and index every content page now.
+  - **search**: ranked full-text search with typo tolerance. Returns the
+    best-matching section of each page, with a deep link and snippet.
+    Filters by path prefix, path substring and taxonomy terms.
+  - **get_doc**: fetch one page by content path, site URL or alias, or a
+    single section of it. Includes the edit link and related pages.
+  - **build_context**: bundle the best-matching sections, each with its
+    source link, into Markdown within a token budget, for AI agents.
+repository: "https://github.com/zWaR/swamp-extensions"
+models:
+  - techdocs/techdocs.ts
+labels:
+  - documentation
+  - hugo
+  - docsy
+  - search
+  - gitlab
+  - ai-context
+platforms:
+  - linux-x86_64
+  - linux-aarch64
+  - darwin-x86_64
+  - darwin-aarch64
+additionalFiles:
+  - README.md
+  - LICENSE.md
