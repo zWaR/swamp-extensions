@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          # Matches the Deno bundled with swamp
+          deno-version: v2.9.7
+
+      - name: Check, lint, format and test every extension
+        shell: bash
+        run: |
+          set -euo pipefail
+          for config in */deno.json; do
+            dir="$(dirname "$config")"
+            echo "::group::$dir"
+            (
+              cd "$dir"
+              deno task fmt:check
+              deno task lint
+              deno task check
+              deno task test
+            )
+            echo "::endgroup::"
+          done
