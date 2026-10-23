@@ -35,3 +35,36 @@ jobs:
             )
             echo "::endgroup::"
           done
+
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: swamp-club/setup-swamp@17127b7554de0c07aa413ace39fcf6c104ffc3f7 # v0.1.1
+        with:
+          api-key: ${{ secrets.SWAMP_API_KEY }}
+
+      - name: swamp extension quality for every extension
+        shell: bash
+        run: |
+          set -uo pipefail
+          failed=0
+          for manifest in */manifest.yaml; do
+            dir="$(dirname "$manifest")"
+            echo "::group::$dir"
+            result="$(cd "$dir" && swamp extension quality manifest.yaml --json)"
+            if ! printf '%s' "$result" | jq -e . >/dev/null 2>&1; then
+              echo "::error::$dir: swamp extension quality did not return JSON"
+              printf '%s\n' "$result"
+              failed=1
+            elif printf '%s' "$result" | jq -e '.status == "passed" and .percentage == 100' >/dev/null; then
+              echo "$dir: quality passed (100%)"
+            else
+              echo "::error::$dir: quality gate failed"
+              printf '%s' "$result" | jq '{status, percentage, missing: [.factors[]? | select(.status != "earned" and .status != "provisional") | .id]}'
+              failed=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$failed"
