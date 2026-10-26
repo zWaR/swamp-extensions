@@ -12,10 +12,14 @@ import { z } from "npm:zod@4.6.5";
 /** Agent CLIs a tier can name; each has a matching `@cachehit/agents` model type. */
 export const ProviderSchema = z.enum(["kiro"]);
 
-/** Role, work item and phase names; also used in data instance names. */
-export const NameSchema = z.string().regex(
-  /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/,
-  "use 1-64 letters, digits, '.', '_' or '-', starting with a letter or digit",
+/**
+ * Role, work item and phase names; also used in data instance names. Single
+ * '.', '_' or '-' between letters and digits, so `--` can join names
+ * unambiguously.
+ */
+export const NameSchema = z.string().max(64).regex(
+  /^[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*$/,
+  "use letters and digits, separated by single '.', '_' or '-' (max 64 characters)",
 );
 
 /** One candidate in a role's ordered tier list. */
@@ -260,11 +264,11 @@ export function decideFallback(
 
 /** Name of the stored fallback decision for one (workItem, role, attempt). */
 export const fallbackName = (workItem: string, role: string, attempt: number) =>
-  `fallback-${workItem}-${role}-${attempt}`;
+  `fallback--${workItem}--${role}--${attempt}`;
 
 /** Name of the stored dispatch resolution for one (workItem, role, attempt). */
 export const dispatchName = (workItem: string, role: string, attempt: number) =>
-  `dispatch-${workItem}-${role}-${attempt}`;
+  `dispatch--${workItem}--${role}--${attempt}`;
 
 /** The model, tier and settings a step should use for one attempt. */
 export function resolveDispatch(

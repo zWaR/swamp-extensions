@@ -108,29 +108,39 @@ type Ctx = {
   logger: { info: Logger };
 };
 
+/** A record to store once under its name, and how to recompute a stored copy. */
+interface Pending {
+  spec: string;
+  name: string;
+  data: Record<string, unknown>;
+  recompute: (stored: Record<string, unknown>) => unknown;
+  tags: Record<string, string>;
+}
+
 /**
- * Writes `data` under `name` unless the same record is already stored. A
- * stored record that differs (other than its timestamp, which `recompute`
+ * Stores each record unless the same one is already stored. Every name is
+ * checked before anything is written, so a conflict leaves no partial write.
+ * A stored record that differs (other than its timestamp, which `recompute`
  * takes) is a conflict: the key was already decided differently.
  */
-async function writeOnce(
-  ctx: Ctx,
-  spec: string,
-  name: string,
-  data: Record<string, unknown>,
-  recompute: (stored: Record<string, unknown>) => unknown,
-  tags: Record<string, string>,
-): Promise<Handle | null> {
-  const stored = await ctx.readResource(name);
-  if (stored) {
-    if (stableJson(stored) !== stableJson(recompute(stored))) {
+async function writeOnce(ctx: Ctx, records: Pending[]): Promise<Handle[]> {
+  const missing: Pending[] = [];
+  for (const r of records) {
+    const stored = await ctx.readResource(r.name);
+    if (!stored) missing.push(r);
+    else if (stableJson(stored) !== stableJson(r.recompute(stored))) {
       throw new Error(
-        `${name} is already stored with a different result; use a new attempt number`,
+        `${r.name} is already stored with a different result; use a new attempt number`,
       );
     }
-    return null;
   }
-  return await ctx.writeResource(spec, name, data, { tags });
+  const handles: Handle[] = [];
+  for (const r of missing) {
+    handles.push(
+      await ctx.writeResource(r.spec, r.name, r.data, { tags: r.tags }),
+    );
+  }
+  return handles;
 }
 
 const decisionTags = (workItem: string, d: Decision) => ({
@@ -224,32 +234,29 @@ export const model = {
           }, resolvedAt);
         const { resolution, decision } = run(new Date().toISOString());
 
-        const handles: Handle[] = [];
+        const records: Pending[] = [];
         if (decision) {
-          const h = await writeOnce(
-            ctx,
-            "fallback",
-            resolution.fallbackRef!,
-            decision,
-            (stored) => run(String(stored.decidedAt)).decision,
-            decisionTags(args.workItem, decision),
-          );
-          if (h) handles.push(h);
+          records.push({
+            spec: "fallback",
+            name: resolution.fallbackRef!,
+            data: decision,
+            recompute: (stored) => run(String(stored.decidedAt)).decision,
+            tags: decisionTags(args.workItem, decision),
+          });
         }
-        const h = await writeOnce(
-          ctx,
-          "dispatch",
-          dispatchName(args.workItem, args.role, args.attempt),
-          resolution,
-          (stored) => run(String(stored.resolvedAt)).resolution,
-          {
+        records.push({
+          spec: "dispatch",
+          name: dispatchName(args.workItem, args.role, args.attempt),
+          data: resolution,
+          recompute: (stored) => run(String(stored.resolvedAt)).resolution,
+          tags: {
             workItem: args.workItem,
             role: args.role,
             disposition: resolution.disposition,
             attempt: String(args.attempt),
           },
-        );
-        if (h) handles.push(h);
+        });
+        const handles = await writeOnce(ctx, records);
         ctx.logger.info(
           "{role} attempt {attempt}: {disposition}, tier {tier} {model}",
           {
@@ -285,19 +292,18 @@ export const model = {
             decidedAt,
           );
         const decision = decide(new Date().toISOString());
-        const h = await writeOnce(
-          ctx,
-          "fallback",
-          fallbackName(args.workItem, args.role, args.attempt),
-          decision,
-          (stored) => decide(String(stored.decidedAt)),
-          decisionTags(args.workItem, decision),
-        );
+        const handles = await writeOnce(ctx, [{
+          spec: "fallback",
+          name: fallbackName(args.workItem, args.role, args.attempt),
+          data: decision,
+          recompute: (stored) => decide(String(stored.decidedAt)),
+          tags: decisionTags(args.workItem, decision),
+        }]);
         ctx.logger.info("{role}: {disposition}", {
           role: args.role,
           disposition: decision.disposition,
         });
-        return { dataHandles: h ? [h] : [] };
+        return { dataHandles: handles };
       },
     },
   },

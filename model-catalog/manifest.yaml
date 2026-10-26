@@ -35,7 +35,7 @@ description: |
 
   swamp model method run catalog resolveDispatch \
     --input workItem=WI-42 --input role=implementer --input instanceName=kiro
-  swamp data get catalog dispatch-WI-42-implementer-1 --json
+  swamp data get catalog dispatch--WI-42--implementer--1 --json
   ```
 
   ## Methods

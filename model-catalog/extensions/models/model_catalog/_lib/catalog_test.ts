@@ -1,10 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { assertEquals, assertThrows } from "jsr:@std/assert@1.0.19";
+import {
+  assertEquals,
+  assertNotEquals,
+  assertThrows,
+} from "jsr:@std/assert@1.0.19";
 import {
   CatalogSchema,
   decideFallback,
+  dispatchName,
   latestFailure,
+  NameSchema,
   resolveDispatch,
   stableJson,
   tierAt,
@@ -133,7 +139,7 @@ Deno.test("resolveDispatch moves to the next tier after a quota failure", () => 
   assertEquals(resolution.model, "claude-sonnet-4.6");
   assertEquals(resolution.effort, "high");
   assertEquals(resolution.parked, false);
-  assertEquals(resolution.fallbackRef, "fallback-WI-1-build-2");
+  assertEquals(resolution.fallbackRef, "fallback--WI-1--build--2");
 });
 
 Deno.test("resolveDispatch stays on the tier for a non-trigger and parks when exhausted", () => {
@@ -198,6 +204,17 @@ Deno.test("latestFailure reads the newest matching @cachehit/agents invocation",
     latestFailure([{ attributes: { unrelated: true } }], "WI-1", "build", keys),
     null,
   );
+});
+
+Deno.test("names can't contain the -- separator, so data names never collide", () => {
+  for (const ok of ["WI-1", "a.b_c-d", "implementer"]) {
+    assertEquals(NameSchema.safeParse(ok).success, true, ok);
+  }
+  for (const bad of ["a--b", "-a", "a-", "a b", "", "x".repeat(65)]) {
+    assertEquals(NameSchema.safeParse(bad).success, false, bad);
+  }
+  assertNotEquals(dispatchName("a-b", "c", 1), dispatchName("a", "b-c", 1));
+  assertEquals(dispatchName("WI-1", "build", 2), "dispatch--WI-1--build--2");
 });
 
 Deno.test("stableJson ignores key order and undefined", () => {
