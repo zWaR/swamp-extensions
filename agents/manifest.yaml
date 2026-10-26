@@ -1,0 +1,54 @@
+manifestVersion: 1
+name: "@cachehit/agents"
+license: Apache-2.0
+version: "2026.10.26.1"
+description: |
+  Run AI coding agents headless from swamp workflows and record what each run
+  did and cost, so a workflow can hand simple subtasks to a cheaper model and
+  keep the expensive one for planning and review. Supports Kiro CLI
+  (`@cachehit/agents/kiro`).
+
+  Each run stores an `invocation` record (model, success, failure class,
+  Kiro credits, duration, tool calls, answer preview) and a `transcript`
+  with the full prompt and answer. The `readonly` tool profile, the default,
+  limits the agent to reading and searching files; `actor` gives it every
+  tool of a Kiro agent without permission prompts.
+
+  ## Quick Start
+
+  ```bash
+  swamp extension pull @cachehit/agents
+  swamp model create @cachehit/agents/kiro kiro \
+    --global-arg defaultModel=claude-haiku-4.5
+
+  swamp model method run kiro listModels
+  swamp model method run kiro invoke \
+    --input prompt="Summarise what src/ does" --input cwd=/path/to/repo
+  swamp model method run kiro invokeAndParse \
+    --input prompt='List the TODOs in src/ as JSON [{"file":..,"line":..}]' \
+    --input model=claude-sonnet-4.6
+  ```
+
+  ## Methods
+
+  - **invoke**: run Kiro with a prompt; fails the step if the run fails.
+  - **invokeAndParse**: like invoke, and the answer must contain JSON, which
+    is stored as `parsed`; asks again when it does not.
+  - **listModels**: store Kiro's models with their credit rate multipliers.
+repository: "https://github.com/zWaR/swamp-extensions"
+models:
+  - kiro/kiro.ts
+labels:
+  - ai
+  - agent
+  - kiro
+  - orchestration
+  - cost
+platforms:
+  - linux-x86_64
+  - linux-aarch64
+  - darwin-x86_64
+  - darwin-aarch64
+additionalFiles:
+  - README.md
+  - LICENSE.md

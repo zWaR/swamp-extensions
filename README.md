@@ -2,9 +2,10 @@
 
 Extensions for [swamp](https://github.com/swamp-club/swamp), published under the `@cachehit` collective.
 
-| Extension                         | Description                                                                                        |
-| --------------------------------- | -------------------------------------------------------------------------------------------------- |
-| [`@cachehit/techdocs`](techdocs/) | Search and AI context building for a Hugo documentation site, read from GitLab or a local checkout |
+| Extension                         | Description                                                                                              |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| [`@cachehit/agents`](agents/)     | Run AI coding agents (Kiro CLI) headless from workflows and record each run's model, credits and outcome |
+| [`@cachehit/techdocs`](techdocs/) | Search and AI context building for a Hugo documentation site, read from GitLab or a local checkout       |
 
 ## Development
 
