@@ -1,0 +1,62 @@
+manifestVersion: 1
+name: "@cachehit/model-catalog"
+license: Apache-2.0
+version: "2026.10.26.1"
+description: |
+  Choose which model each kind of work uses, and fall back to the next model
+  when one is rate limited, out of quota or unavailable. Built for agent
+  steps run with `@cachehit/agents` (Kiro CLI).
+
+  You own the catalog: each role (for example `implementer`, `reviewer`,
+  `classifier`) has ordered tiers of `{model, costClass, toolProfile, effort}`.
+  `resolveDispatch` stores the tier a step should use for one
+  (workItem, role, attempt). Given a failure class, or the newest failed
+  `@cachehit/agents` invocation for the work item, it advances on
+  `rate-limit`, `quota` and `model-unavailable`, stays on other failures,
+  and parks when tiers or attempts run out. Results are idempotent per
+  (workItem, role, attempt).
+
+  ## Quick Start
+
+  ```bash
+  swamp extension pull @cachehit/model-catalog
+  swamp model create @cachehit/model-catalog catalog --global-arg 'catalog={
+    "version": "1",
+    "roles": {
+      "implementer": {"tiers": [
+        {"model": "claude-haiku-4.5", "costClass": "low", "toolProfile": "actor"},
+        {"model": "claude-sonnet-4.6", "costClass": "medium", "toolProfile": "actor"}
+      ]},
+      "reviewer": {"tiers": [
+        {"model": "claude-opus-4.8", "costClass": "high", "toolProfile": "readonly"}
+      ]}
+    }
+  }'
+
+  swamp model method run catalog resolveDispatch \
+    --input workItem=WI-42 --input role=implementer --input instanceName=kiro
+  swamp data get catalog dispatch-WI-42-implementer-1 --json
+  ```
+
+  ## Methods
+
+  - **resolveDispatch**: store the model, tool profile and effort for one
+    attempt, applying a fallback when a failure signal is given or read.
+  - **recordFallback**: store only the fallback decision for a signal.
+repository: "https://github.com/zWaR/swamp-extensions"
+models:
+  - model_catalog/model_catalog.ts
+labels:
+  - ai
+  - agent
+  - kiro
+  - model-routing
+  - fallback
+platforms:
+  - linux-x86_64
+  - linux-aarch64
+  - darwin-x86_64
+  - darwin-aarch64
+additionalFiles:
+  - README.md
+  - LICENSE.md
