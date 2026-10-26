@@ -77,7 +77,7 @@ Deno.test("resolveDispatch stores tier 0 for a first attempt", async () => {
   }, ctx);
   assertEquals(reads, []);
   const [d] = written();
-  assertEquals(d.name, "dispatch-WI-1-build-1");
+  assertEquals(d.name, "dispatch--WI-1--build--1");
   assertEquals(d.data.model, "claude-haiku-4.5");
   assertEquals(d.data.disposition, "initial");
 });
@@ -100,7 +100,7 @@ Deno.test("resolveDispatch reads the failed invocation and advances from its tie
   assertEquals(reads, ["kiro/invocation"]);
   const fallback = written().find((w) => w.specName === "fallback")!;
   const dispatch = written().find((w) => w.specName === "dispatch")!;
-  assertEquals(fallback.name, "fallback-WI-1-build-2");
+  assertEquals(fallback.name, "fallback--WI-1--build--2");
   assertEquals(fallback.data.disposition, "advance");
   assertEquals(dispatch.data.tier, 2);
   assertEquals(dispatch.data.model, "claude-opus-4.8");
@@ -182,6 +182,36 @@ Deno.test("resolveDispatch keeps a stored result when the invocation feed has mo
   assertEquals(later.written(), []);
 });
 
+Deno.test("resolveDispatch writes nothing when the fallback decision conflicts", async () => {
+  const first = context();
+  await model.methods.recordFallback.execute({
+    workItem: "WI-1",
+    role: "build",
+    currentTier: 0,
+    signalClass: "quota",
+    attempt: 2,
+    maxAttempts: 2,
+  }, first.ctx);
+  const stored = Object.fromEntries(
+    first.written().map((w) => [w.name, w.data]),
+  );
+  const later = context({ stored });
+  await assertRejects(
+    () =>
+      model.methods.resolveDispatch.execute({
+        workItem: "WI-1",
+        role: "build",
+        instanceName: "kiro",
+        signalClass: "quota",
+        attempt: 2,
+        maxAttempts: 3,
+      }, later.ctx),
+    Error,
+    "fallback--WI-1--build--2 is already stored",
+  );
+  assertEquals(later.written(), []);
+});
+
 Deno.test("resolveDispatch fails closed on an unknown role and writes nothing", async () => {
   const { ctx, written } = context();
   await assertRejects(
@@ -210,6 +240,6 @@ Deno.test("recordFallback stores the decision", async () => {
     maxAttempts: 3,
   }, ctx);
   const [f] = written();
-  assertEquals(f.name, "fallback-WI-1-reviewer-1");
+  assertEquals(f.name, "fallback--WI-1--reviewer--1");
   assertEquals(f.data.disposition, "park");
 });

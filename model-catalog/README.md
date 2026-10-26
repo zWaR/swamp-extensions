@@ -76,7 +76,7 @@ Tier fields: `model` and `costClass` (`low`, `medium`, `high`; advisory) are req
 
 ### `resolveDispatch`
 
-Stores, as `dispatch-<workItem>-<role>-<attempt>`, the tier a step should use:
+Stores, as `dispatch--<workItem>--<role>--<attempt>`, the tier a step should use:
 
 ```bash
 swamp model method run catalog resolveDispatch \
@@ -85,7 +85,7 @@ swamp model method run catalog resolveDispatch \
 
 | Argument       | Default        | Purpose                                                                              |
 | -------------- | -------------- | ------------------------------------------------------------------------------------ |
-| `workItem`     | (required)     | Task identifier; letters, digits, `.`, `_`, `-`                                      |
+| `workItem`     | (required)     | Task identifier; letters and digits joined by single `.`, `_` or `-`                 |
 | `role`         | (required)     | Catalog role or `roleMap` alias                                                      |
 | `instanceName` | (required)     | Agent step or model instance; recorded unchanged                                     |
 | `attempt`      | `1`            | 1-based attempt number                                                               |
@@ -100,7 +100,7 @@ The record has `model`, `tier`, `toolProfile`, `effort`, `provider` and `costCla
 - `disposition`: `initial` (no failure signal), `advance` (next tier), `no-fallback` (same tier; the failure is the
   step's own to handle) or `park` (no tier or attempt left; `parked` is true).
 - `signalClass` and `signalSource` (`argument` or `invocation`).
-- `fallbackRef`: the name of the `fallback-…` decision stored with it, when there was a signal.
+- `fallbackRef`: the name of the `fallback--…` decision stored with it, when there was a signal.
 - `reasons`, `catalogVersion`, `resolvedAt`.
 
 Calling it again with the same inputs writes nothing. With `phase`, a result already stored for that key is kept as is,
@@ -109,7 +109,7 @@ differ is an error: use the next attempt number.
 
 ### `recordFallback`
 
-Stores only the decision, as `fallback-<workItem>-<role>-<attempt>`:
+Stores only the decision, as `fallback--<workItem>--<role>--<attempt>`:
 
 ```bash
 swamp model method run catalog recordFallback \
@@ -148,14 +148,14 @@ swamp model method run catalog resolveDispatch \
 ```
 
 In a workflow, pass the choice to the agent step with
-`data.latest("catalog", "dispatch-WI-42-implementer-1").attributes.model`, and likewise `toolProfile` and `effort`.
+`data.latest("catalog", "dispatch--WI-42--implementer--1").attributes.model`, and likewise `toolProfile` and `effort`.
 
 ## Data
 
-| Resource   | Name                             | Content                                          |
-| ---------- | -------------------------------- | ------------------------------------------------ |
-| `dispatch` | `dispatch-<workItem>-<role>-<n>` | The tier and settings for attempt `n`            |
-| `fallback` | `fallback-<workItem>-<role>-<n>` | The decision, with from and to tiers and reasons |
+| Resource   | Name                                | Content                                          |
+| ---------- | ----------------------------------- | ------------------------------------------------ |
+| `dispatch` | `dispatch--<workItem>--<role>--<n>` | The tier and settings for attempt `n`            |
+| `fallback` | `fallback--<workItem>--<role>--<n>` | The decision, with from and to tiers and reasons |
 
 Both keep the last 40 versions and don't expire.
 
