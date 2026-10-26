@@ -68,3 +68,43 @@ jobs:
             echo "::endgroup::"
           done
           exit "$failed"
+
+  # A merged PR lands as a push to main; publish every extension whose manifest version is not in the registry yet.
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test, quality]
+    runs-on: ubuntu-latest
+    concurrency:
+      group: publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: swamp-club/setup-swamp@17127b7554de0c07aa413ace39fcf6c104ffc3f7 # v0.1.1
+        with:
+          api-key: ${{ secrets.SWAMP_API_KEY }}
+
+      - name: Publish extensions with a new version
+        shell: bash
+        run: |
+          set -euo pipefail
+          for manifest in */manifest.yaml; do
+            dir="$(dirname "$manifest")"
+            version="$(yq -r '.version' "$manifest")"
+            published="$(swamp extension version --manifest "$manifest" --json | jq -r '.currentPublished // ""')"
+            if [[ "$version" == "$published" ]]; then
+              echo "$dir: $version already published, skipping"
+              continue
+            fi
+            echo "::group::$dir: publishing $version (registry has ${published:-nothing})"
+            args=(--yes)
+            if [[ -f "$dir/RELEASE_NOTES.md" ]]; then
+              # Body of the "## <version>" section; the registry caps notes at 5000 chars
+              notes="$(awk -v h="## $version" '$0 == h { f = 1; next } /^## / { f = 0 } f' "$dir/RELEASE_NOTES.md")"
+              if [[ -n "$notes" ]]; then
+                args+=(--release-notes "${notes:0:5000}")
+              fi
+            fi
+            (cd "$dir" && swamp extension push manifest.yaml "${args[@]}")
+            echo "::endgroup::"
+          done
