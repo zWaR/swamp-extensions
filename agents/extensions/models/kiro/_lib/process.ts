@@ -54,6 +54,9 @@ export async function runProcess(
   const started = Date.now();
   let child: Deno.ChildProcess;
   try {
+    // Running kiro-cli is this extension's purpose; arguments are an argv
+    // array (no shell) and the prompt goes on stdin.
+    // swamp-quality-ignore deno-command
     child = new Deno.Command(command, {
       args,
       cwd: opts.cwd,
