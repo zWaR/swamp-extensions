@@ -19,8 +19,6 @@ import {
   type StreamSummary,
 } from "./_lib/stream.ts";
 
-const VERSION = "2026.10.26.1";
-
 /** Kiro agent written to ~/.kiro/agents for the readonly tool profile. */
 export const READONLY_AGENT_NAME = "swamp-agents-kiro-readonly";
 // Not `code`: its pattern_rewrite operation writes files.
@@ -284,9 +282,19 @@ async function invoke(
   const model = args.model ?? g.defaultModel;
   const effort = args.effort ?? null;
   const cwd = args.cwd ?? Deno.cwd();
+  const cwdInfo = await Deno.stat(cwd).catch(() => null);
+  if (!cwdInfo?.isDirectory) {
+    throw new Error(`cwd ${cwd} is not an existing directory`);
+  }
   const invocationId = args.invocationId ?? crypto.randomUUID();
   const env = childEnv(Deno.env.toObject());
   if (toolProfile === "readonly") await ensureReadonlyAgent(env.HOME);
+  ctx.logger.info("Running Kiro {model} ({profile}) in {cwd} as {id}", {
+    model,
+    profile: toolProfile,
+    cwd,
+    id: invocationId,
+  });
 
   const cliArgs = buildChatArgs({ model, toolProfile, agent, effort });
   const startedAt = new Date();
@@ -419,7 +427,7 @@ const lifetime = "30d" as const;
 /** Kiro CLI agent model. */
 export const model = {
   type: "@cachehit/agents/kiro",
-  version: VERSION,
+  version: "2026.10.26.1",
   globalArguments: GlobalArgsSchema,
   resources: {
     invocation: {
@@ -469,6 +477,9 @@ export const model = {
       arguments: z.object({}),
       execute: async (_args: Record<string, never>, ctx: Ctx) => {
         const g = ctx.globalArgs;
+        ctx.logger.info("Listing Kiro models with {path}", {
+          path: g.kiroPath,
+        });
         const result = await runProcess(
           g.kiroPath,
           ["chat", "--list-models", "--format", "json"],
