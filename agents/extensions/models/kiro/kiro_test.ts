@@ -296,6 +296,22 @@ Deno.test("invoke rejects an agent with the readonly profile", async () => {
   );
 });
 
+Deno.test("invoke rejects a cwd that does not exist", async () => {
+  await withHome(async () => {
+    const kiro = await fakeKiro([{ stdout: "" }]);
+    const { context: ctx } = context({ kiroPath: kiro.script });
+    await assertRejects(
+      () =>
+        model.methods.invoke.execute(
+          { prompt: "x", cwd: "/nonexistent/dir", tags: {} },
+          ctx,
+        ),
+      Error,
+      "not an existing directory",
+    );
+  });
+});
+
 Deno.test("invoke explains a missing kiro-cli", async () => {
   await withHome(async () => {
     const { context: ctx } = context({ kiroPath: "/nonexistent/kiro-cli" });
