@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "strict": true
+  },
+  "tasks": {
+    "check": "deno check extensions/models/kiro/kiro.ts",
+    "lint": "deno lint extensions/",
+    "fmt": "deno fmt extensions/",
+    "fmt:check": "deno fmt --check extensions/",
+    "test": "deno test --allow-env --allow-read --allow-write --allow-run --allow-sys extensions/"
+  },
+  "lint": {
+    "rules": {
+      "exclude": [
+        "no-import-prefix"
+      ]
+    }
+  },
+  "fmt": {
+    "exclude": [
+      "extensions/models/kiro/testdata/"
+    ]
+  },
+  "imports": {
+    "@swamp-club/swamp-testing": "jsr:@swamp-club/swamp-testing@0.20261016.58"
+  }
+}
