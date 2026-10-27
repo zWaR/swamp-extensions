@@ -127,6 +127,26 @@ An invocation also holds the exit code, error message, retry count, Kiro session
 answer and, from `invokeAndParse`, the `parsed` JSON. Invocations and transcripts expire after 30 days. Transcripts hold
 the full prompt and answer, so treat the swamp datastore with the same care as the repository the agent worked on.
 
+Usage fields of an invocation:
+
+| Field      | Content                                                                                      |
+| ---------- | -------------------------------------------------------------------------------------------- |
+| `credits`  | Kiro credits summed over every attempt, retries included; null when no attempt reported any  |
+| `requests` | Model requests summed over every attempt, the same way as `credits`                          |
+| `attempts` | One entry per attempt, in order; the top-level outcome fields describe the last attempt only |
+
+Each `attempts` entry:
+
+| Field          | Content                                                              |
+| -------------- | -------------------------------------------------------------------- |
+| `attempt`      | Attempt number, starting at 1                                        |
+| `exitCode`     | Exit code of `kiro-cli`                                              |
+| `failureClass` | Failure class of the attempt; null when it succeeded                 |
+| `error`        | Error message of the attempt; null when it succeeded                 |
+| `credits`      | Kiro credits metered for the attempt; null when Kiro reported none   |
+| `requests`     | Model requests metered for the attempt; null when Kiro reported none |
+| `durationMs`   | Run time of the `kiro-cli` process                                   |
+
 Failure classes: `rate-limit`, `quota`, `auth`, `model-unavailable`, `timeout`, `contract-violation`, `infrastructure`,
 `unknown`. Only `rate-limit` and killed processes (exit 137 or 143) are retried unchanged.
 

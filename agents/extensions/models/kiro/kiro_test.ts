@@ -160,6 +160,8 @@ Deno.test("invoke sends the prompt on stdin and records the run", async () => {
       assertEquals(inv.retries, 0);
       assertEquals(inv.toolCalls[0].name, "shell");
       assert(inv.credits > 0.06 && inv.credits < 0.061);
+      assertEquals(inv.requests, 2);
+      assertEquals(inv.attempts.length, 1);
       assertEquals(inv.tags, { role: "worker" });
       assertEquals("parsed" in inv, false);
       assertEquals(
@@ -213,6 +215,19 @@ Deno.test("invoke retries a rate limit and succeeds", async () => {
     const inv = written(getWrittenResources() as Written[], "invocation");
     assertEquals(inv.success, true);
     assertEquals(inv.retries, 1);
+    // success_json.jsonl meters one request of 0.05059837883913765 credits.
+    const credits = 0.05059837883913765;
+    assertEquals(inv.attempts.length, 2);
+    assertEquals(inv.attempts[0].attempt, 1);
+    assertEquals(inv.attempts[0].exitCode, 1);
+    assertEquals(inv.attempts[0].failureClass, "rate-limit");
+    assertEquals(inv.attempts[0].credits, null);
+    assertEquals(inv.attempts[1].attempt, 2);
+    assertEquals(inv.attempts[1].exitCode, 0);
+    assertEquals(inv.attempts[1].failureClass, null);
+    assertEquals(inv.attempts[1].credits, credits);
+    assertEquals(inv.credits, credits);
+    assertEquals(inv.requests, 1);
   });
 });
 

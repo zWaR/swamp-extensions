@@ -2,7 +2,8 @@
  * A caller-owned catalog that maps kinds of work (roles) to ordered model
  * tiers, for agent steps run with `@cachehit/agents`. `resolveDispatch` tells
  * a workflow step which model, tool profile and effort to use; a rate limit,
- * quota or unavailable model moves the role to its next tier.
+ * quota or unavailable model moves the role to its next tier. `usageReport`
+ * stores credits, runs and failures per job and role from agent invocations.
  *
  * @module
  */
@@ -26,6 +27,7 @@ import {
   stableJson,
   tierOfModel,
 } from "./_lib/catalog.ts";
+import { aggregateUsage, usageName, UsageSchema } from "./_lib/usage.ts";
 
 const GlobalArgsSchema = z.object({
   catalog: CatalogSchema.describe(
@@ -90,6 +92,30 @@ const ResolveDispatchArgsSchema = z.object({
 });
 type ResolveDispatchArgs = z.infer<typeof ResolveDispatchArgsSchema>;
 
+const UsageReportArgsSchema = z.object({
+  agentModel: z.string().min(1).describe(
+    "@cachehit/agents/kiro model instance to read invocations from",
+  ),
+  reportName: NameSchema.default("latest").describe(
+    "Name of the stored report; a new run with the same name replaces it",
+  ),
+  workItem: NameSchema.optional().describe(
+    "Keep only invocations tagged with this work item (tag key from signalTagKeys.workItem)",
+  ),
+  filterTags: z.record(z.string(), z.string()).default({}).describe(
+    'Keep only invocations with all of these tags, for example {"workflowRunId":"<run ID>"}',
+  ),
+  jobTagKey: z.string().min(1).default("job").describe(
+    "Tag key that holds the workflow job; swamp sets job on data written by a workflow step",
+  ),
+  roleTagKey: z.string().min(1).default("role").describe(
+    "Invocation tag key that holds the role; folded through roleMap",
+  ),
+});
+type UsageReportArgs = z.infer<typeof UsageReportArgsSchema>;
+
+const NO_READ_MODEL_DATA = "this swamp version cannot read other models' data";
+
 type Handle = Record<string, unknown>;
 type Logger = (message: string, fields?: Record<string, unknown>) => void;
 type Ctx = {
@@ -104,7 +130,7 @@ type Ctx = {
   readModelData?: (
     modelName: string,
     specName?: string,
-  ) => Promise<{ attributes?: unknown }[]>;
+  ) => Promise<{ attributes?: unknown; tags?: unknown }[]>;
   logger: { info: Logger };
 };
 
@@ -154,7 +180,12 @@ const decisionTags = (workItem: string, d: Decision) => ({
 /** Model catalog with tiered fallback for agent steps. */
 export const model = {
   type: "@cachehit/model-catalog",
-  version: "2026.10.26.1",
+  version: "2026.10.27.1",
+  upgrades: [{
+    toVersion: "2026.10.27.1",
+    description: "Adds the usageReport method and usage resource",
+    upgradeAttributes: (old: Record<string, unknown>) => old,
+  }],
   globalArguments: GlobalArgsSchema,
   resources: {
     dispatch: {
@@ -169,6 +200,13 @@ export const model = {
         "Fallback decision (advance, no-fallback or park) for one (workItem, role, attempt)",
       schema: DecisionSchema,
       lifetime: "infinite" as const,
+      garbageCollection: 40,
+    },
+    usage: {
+      description:
+        "Credits, runs, failures, retries and duration per job and role, read from @cachehit/agents invocations",
+      schema: UsageSchema,
+      lifetime: "30d" as const,
       garbageCollection: 40,
     },
   },
@@ -205,7 +243,7 @@ export const model = {
           }
           if (!ctx.readModelData) {
             throw new Error(
-              "this swamp version cannot read other models' data; pass signalClass instead of phase",
+              `${NO_READ_MODEL_DATA}; pass signalClass instead of phase`,
             );
           }
           const source = args.agentModel ?? args.instanceName;
@@ -304,6 +342,49 @@ export const model = {
           disposition: decision.disposition,
         });
         return { dataHandles: handles };
+      },
+    },
+    usageReport: {
+      description:
+        "Store a usage report (Kiro credits, no token counts) per job and role from the invocations of an @cachehit/agents model",
+      arguments: UsageReportArgsSchema,
+      execute: async (args: UsageReportArgs, ctx: Ctx) => {
+        const g = ctx.globalArgs;
+        ctx.logger.info("Building usage report {report} from {agentModel}", {
+          report: args.reportName,
+          agentModel: args.agentModel,
+        });
+        if (!ctx.readModelData) throw new Error(NO_READ_MODEL_DATA);
+        const usage = aggregateUsage(
+          await ctx.readModelData(args.agentModel, "invocation"),
+          {
+            agentModel: args.agentModel,
+            reportName: args.reportName,
+            workItem: args.workItem ?? null,
+            workItemTagKey: g.signalTagKeys.workItem,
+            filterTags: args.filterTags,
+            jobTagKey: args.jobTagKey,
+            roleTagKey: args.roleTagKey,
+            roleMap: g.roleMap,
+            generatedAt: new Date().toISOString(),
+          },
+        );
+        // A report is a snapshot, so a rerun replaces it.
+        const handle = await ctx.writeResource(
+          "usage",
+          usageName(args.reportName),
+          usage,
+        );
+        ctx.logger.info(
+          "{report}: {invocations} invocations, {credits} credits, {jobs} jobs",
+          {
+            report: args.reportName,
+            invocations: usage.totals.invocations,
+            credits: usage.totals.credits,
+            jobs: usage.jobs.length,
+          },
+        );
+        return { dataHandles: [handle] };
       },
     },
   },

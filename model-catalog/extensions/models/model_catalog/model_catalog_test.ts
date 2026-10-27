@@ -8,6 +8,7 @@ import {
 import { createModelTestContext } from "@swamp-club/swamp-testing";
 import { model } from "./model_catalog.ts";
 import { CATALOG } from "./_lib/fixture_test.ts";
+import type { Usage } from "./_lib/usage.ts";
 
 type Ctx = Parameters<typeof model.methods.resolveDispatch.execute>[1];
 type Written = {
@@ -242,4 +243,137 @@ Deno.test("recordFallback stores the decision", async () => {
   const [f] = written();
   assertEquals(f.name, "fallback--WI-1--reviewer--1");
   assertEquals(f.data.disposition, "park");
+});
+
+let invocationSeq = 0;
+/** An `@cachehit/agents/kiro` invocation record with defaults. */
+const invocation = (over: Record<string, unknown> = {}) => {
+  invocationSeq += 1;
+  return {
+    attributes: {
+      invocationId: `inv-${invocationSeq}`,
+      startedAt: "2026-10-27T10:00:00.000Z",
+      success: true,
+      credits: 1,
+      durationMs: 100,
+      model: "claude-haiku-4.5",
+      tags: { job: "j1", role: "implementer" },
+      ...over,
+    },
+  };
+};
+
+Deno.test("usageReport stores totals per job and role from the invocations", async () => {
+  const { ctx, written, reads } = context({
+    invocations: {
+      kiro: [
+        invocation({
+          tags: { job: "j1", role: "build" },
+          credits: 1,
+          attempts: [{}, {}],
+        }),
+        invocation({
+          tags: { job: "j1", role: "reviewer" },
+          credits: 2,
+          success: false,
+        }),
+        invocation({
+          tags: { job: "j2", role: "implementer" },
+          credits: 4,
+          startedAt: "2026-10-27T11:00:00.000Z",
+        }),
+        invocation({ tags: { role: "implementer" }, credits: 8 }),
+        invocation({ credits: "not a number" }),
+      ],
+    },
+  });
+  const result = await model.methods.usageReport.execute({
+    agentModel: "kiro",
+    reportName: "latest",
+    filterTags: {},
+    jobTagKey: "job",
+    roleTagKey: "role",
+  }, ctx);
+  assertEquals(reads, ["kiro/invocation"]);
+  assertEquals(result.dataHandles.length, 1);
+  const all = written();
+  assertEquals(all.length, 1);
+  const [u] = all;
+  assertEquals(u.specName, "usage");
+  assertEquals(u.name, "usage--latest");
+  const data = u.data as Usage;
+  assertEquals(data.agentModel, "kiro");
+  assertEquals(data.workItem, null);
+  assertEquals(data.totals, {
+    invocations: 4,
+    succeeded: 3,
+    failed: 1,
+    credits: 15,
+    creditsMissing: 0,
+    retries: 1,
+    durationMs: 400,
+    models: { "claude-haiku-4.5": 4 },
+  });
+  assertEquals(Object.keys(data.byRole).sort(), ["implementer", "reviewer"]);
+  assertEquals(data.byRole.implementer.credits, 5);
+  assertEquals(data.byRole.implementer.retries, 1);
+  assertEquals(data.byRole.reviewer.credits, 2);
+  assertEquals(data.byRole.reviewer.failed, 1);
+  assertEquals(data.jobs.map((j) => j.job), ["j1", "j2"]);
+  assertEquals(data.jobs[0].total.credits, 3);
+  assertEquals(data.jobs[0].roles.implementer.credits, 1);
+  assertEquals(data.jobs[0].roles.reviewer.credits, 2);
+  assertEquals(data.jobs[1].total.credits, 4);
+  assertEquals(Object.keys(data.jobs[1].roles), ["implementer"]);
+  assertEquals(data.unattributed.invocations, 1);
+  assertEquals(data.unattributed.credits, 8);
+});
+
+Deno.test("usageReport keeps only the work item's invocations under its report name", async () => {
+  const { ctx, written } = context({
+    invocations: {
+      kiro: [
+        invocation({ tags: { workItem: "WI-1", job: "j1", role: "build" } }),
+        invocation({
+          tags: { workItem: "WI-2", job: "j2", role: "build" },
+          credits: 4,
+        }),
+        invocation({ credits: 2 }),
+      ],
+    },
+  });
+  await model.methods.usageReport.execute({
+    agentModel: "kiro",
+    reportName: "wi-1",
+    workItem: "WI-1",
+    filterTags: {},
+    jobTagKey: "job",
+    roleTagKey: "role",
+  }, ctx);
+  const [u] = written();
+  assertEquals(u.name, "usage--wi-1");
+  const data = u.data as Usage;
+  assertEquals(data.reportName, "wi-1");
+  assertEquals(data.workItem, "WI-1");
+  assertEquals(data.totals.invocations, 1);
+  assertEquals(data.totals.credits, 1);
+  assertEquals(data.jobs.map((j) => j.job), ["j1"]);
+  assertEquals(Object.keys(data.byRole), ["implementer"]);
+});
+
+Deno.test("usageReport fails without readModelData and writes nothing", async () => {
+  const { ctx, written } = context();
+  await assertRejects(
+    () =>
+      model.methods.usageReport.execute({
+        agentModel: "kiro",
+        reportName: "latest",
+        filterTags: {},
+        jobTagKey: "job",
+        roleTagKey: "role",
+      }, { ...ctx, readModelData: undefined }),
+    Error,
+    "this swamp version cannot read other models' data",
+  );
+  assertEquals(written(), []);
 });

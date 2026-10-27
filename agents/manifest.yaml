@@ -1,7 +1,7 @@
 manifestVersion: 1
 name: "@cachehit/agents"
 license: Apache-2.0
-version: "2026.10.26.1"
+version: "2026.10.27.1"
 description: |
   Run AI coding agents headless from swamp workflows and record what each run
   did and cost, so a workflow can hand simple subtasks to a cheaper model and
@@ -10,7 +10,9 @@ description: |
 
   Each run stores an `invocation` record (model, success, failure class,
   Kiro credits, duration, tool calls, answer preview) and a `transcript`
-  with the full prompt and answer. The `readonly` tool profile, the default,
+  with the full prompt and answer. An invocation records each attempt,
+  retries included, and the credits and model requests summed over all of
+  them. The `readonly` tool profile, the default,
   limits the agent to reading and searching files; `actor` gives it every
   tool of a Kiro agent without permission prompts.
 

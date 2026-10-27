@@ -127,6 +127,16 @@ const InvocationSchema = z.object({
   sessionId: z.string().nullable(),
   stopReason: z.string().nullable(),
   credits: z.number().nullable(),
+  requests: z.number().nullable(),
+  attempts: z.array(z.object({
+    attempt: z.number(),
+    exitCode: z.number(),
+    failureClass: z.enum(FAILURE_CLASSES).nullable(),
+    error: z.string().nullable(),
+    credits: z.number().nullable(),
+    requests: z.number().nullable(),
+    durationMs: z.number(),
+  })),
   turnDurationMs: z.number().nullable(),
   contextUsagePercentage: z.number().nullable(),
   toolCalls: z.array(z.object({
@@ -263,6 +273,12 @@ function judge(process: ProcessResult, requireJson: boolean): Attempt {
   return { process, stream, ok: false, failure, error, parsed: null };
 }
 
+/** Sum of the non-null values; null when every value is null. */
+const sumOrNull = (values: (number | null)[]): number | null =>
+  values.some((v) => v !== null)
+    ? values.reduce<number>((total, v) => total + (v ?? 0), 0)
+    : null;
+
 /** Runs Kiro, retrying rate limits, killed processes and (optionally) non-JSON answers. */
 async function invoke(
   args: InvokeArgs,
@@ -301,6 +317,15 @@ async function invoke(
   let prompt = args.prompt;
   let retries = 0;
   let attempt: Attempt;
+  const attempts: {
+    attempt: number;
+    exitCode: number;
+    failureClass: FailureClass | null;
+    error: string | null;
+    credits: number | null;
+    requests: number | null;
+    durationMs: number;
+  }[] = [];
   while (true) {
     const process = await runProcess(g.kiroPath, cliArgs, {
       cwd,
@@ -310,6 +335,15 @@ async function invoke(
       idleTimeoutMs: args.idleTimeoutMs ?? g.idleTimeoutMs,
     });
     attempt = judge(process, requireJson);
+    attempts.push({
+      attempt: attempts.length + 1,
+      exitCode: process.code,
+      failureClass: attempt.failure,
+      error: attempt.error,
+      credits: attempt.stream.credits,
+      requests: attempt.stream.requests,
+      durationMs: process.durationMs,
+    });
     const retry = !attempt.ok && retries < g.maxRetries &&
       (attempt.failure === "contract-violation" ||
         isRetryable(attempt.failure!, process.code));
@@ -328,6 +362,7 @@ async function invoke(
   }
 
   const { process, stream } = attempt;
+  const credits = sumOrNull(attempts.map((a) => a.credits));
   const invocation = await ctx.writeResource(
     "invocation",
     `invocation-${invocationId}`,
@@ -349,7 +384,9 @@ async function invoke(
       durationMs: Date.now() - startedAt.getTime(),
       sessionId: stream.sessionId,
       stopReason: stream.stopReason,
-      credits: stream.credits,
+      credits,
+      requests: sumOrNull(attempts.map((a) => a.requests)),
+      attempts,
       turnDurationMs: stream.turnDurationMs,
       contextUsagePercentage: stream.contextUsagePercentage,
       toolCalls: stream.toolCalls.map(({ name, title, status }) => ({
@@ -381,7 +418,7 @@ async function invoke(
       model,
       status: attempt.ok ? "ok" : attempt.failure,
       ms: process.durationMs,
-      credits: stream.credits ?? "unknown",
+      credits: credits ?? "unknown",
       tools: stream.toolCalls.length,
       retries,
     },
@@ -427,12 +464,18 @@ const lifetime = "30d" as const;
 /** Kiro CLI agent model. */
 export const model = {
   type: "@cachehit/agents/kiro",
-  version: "2026.10.26.1",
+  version: "2026.10.27.1",
+  upgrades: [{
+    toVersion: "2026.10.27.1",
+    description:
+      "Adds attempts and requests to invocation records; credits now sum every attempt",
+    upgradeAttributes: (old: Record<string, unknown>) => old,
+  }],
   globalArguments: GlobalArgsSchema,
   resources: {
     invocation: {
       description:
-        "One Kiro run: model, success, failure class, credits, duration, tool calls, answer preview",
+        "One Kiro run: model, success, failure class, credits and requests summed over every attempt, each attempt, duration, tool calls, answer preview",
       schema: InvocationSchema,
       lifetime,
       garbageCollection: 100,
