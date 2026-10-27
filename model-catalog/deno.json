@@ -3,7 +3,7 @@
     "strict": true
   },
   "tasks": {
-    "check": "deno check extensions/models/model_catalog/model_catalog.ts",
+    "check": "deno check extensions/models/model_catalog/model_catalog.ts extensions/reports/usage_summary.ts",
     "lint": "deno lint extensions/",
     "fmt": "deno fmt extensions/",
     "fmt:check": "deno fmt --check extensions/",

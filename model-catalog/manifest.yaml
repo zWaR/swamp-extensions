@@ -1,7 +1,7 @@
 manifestVersion: 1
 name: "@cachehit/model-catalog"
 license: Apache-2.0
-version: "2026.10.27.2"
+version: "2026.10.27.3"
 description: |
   Choose which model each kind of work uses, and fall back to the next model
   when one is rate limited, out of quota or unavailable. Built for agent
@@ -47,9 +47,17 @@ description: |
   - **usageReport**: store Kiro credits, Claude Code cost and tokens, runs,
     failures, retries and duration per job and role, read from the
     invocations of one or more @cachehit/agents models.
+
+  ## Reports
+
+  - **@cachehit/model-catalog/usage-summary**: at the end of a workflow
+    run, show the credits, cost, tokens and run time of each agent run and
+    of each role (orchestrator, workers, ...).
 repository: "https://github.com/zWaR/swamp-extensions"
 models:
   - model_catalog/model_catalog.ts
+reports:
+  - usage_summary.ts
 labels:
   - ai
   - agent

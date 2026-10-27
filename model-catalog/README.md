@@ -161,6 +161,28 @@ Each bucket has:
 Role tags are folded through `roleMap`; a role that is not in the catalog is kept under its own name. Records that are
 not invocation records are skipped.
 
+### Usage summary at the end of a workflow
+
+The workflow report `@cachehit/model-catalog/usage-summary` prints, when a workflow run ends, what each agent step of
+that run used. Require it in the workflow:
+
+```yaml
+reports:
+  require:
+    - "@cachehit/model-catalog/usage-summary"
+```
+
+It reads the `invocation` records the run's `@cachehit/agents` steps wrote, Kiro and Claude Code alike, and shows:
+
+- **By role**: runs, failures, Kiro credits, Claude Code cost, tokens (input / output / cache), agent time (summed run
+  durations), wall time (first start to last finish, so parallel workers overlap) and retries, plus a total row.
+- **Runs**: the same per agent run, with its job, step, agent and model.
+
+The role is the invocation's `role` tag, folded through the `roleMap` of a catalog step in the same workflow; a run
+without one is listed under its step name. Kiro runs show `—` for cost and tokens, Claude Code runs `—` for credits. View
+it again later with `swamp report get @cachehit/model-catalog/usage-summary --workflow <workflow>`. Unlike
+`usageReport`, it needs no extra step and covers only the one workflow run.
+
 ## Fallback rules
 
 | Failure class                                                                                          | Result                    |
