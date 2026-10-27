@@ -3,7 +3,7 @@
     "strict": true
   },
   "tasks": {
-    "check": "deno check extensions/models/kiro/kiro.ts",
+    "check": "deno check extensions/models/kiro/kiro.ts extensions/models/claude/claude.ts",
     "lint": "deno lint extensions/",
     "fmt": "deno fmt extensions/",
     "fmt:check": "deno fmt --check extensions/",
@@ -18,7 +18,8 @@
   },
   "fmt": {
     "exclude": [
-      "extensions/models/kiro/testdata/"
+      "extensions/models/kiro/testdata/",
+      "extensions/models/claude/testdata/"
     ]
   },
   "imports": {

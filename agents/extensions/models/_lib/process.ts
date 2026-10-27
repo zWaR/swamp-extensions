@@ -49,13 +49,15 @@ export async function runProcess(
     env: Record<string, string>;
     wallTimeoutMs: number;
     idleTimeoutMs: number;
+    /** Global argument that sets `command`, named when it is not found. */
+    pathArg: string;
   },
 ): Promise<ProcessResult> {
   const started = Date.now();
   let child: Deno.ChildProcess;
   try {
-    // Running kiro-cli is this extension's purpose; arguments are an argv
-    // array (no shell) and the prompt goes on stdin.
+    // Running an agent CLI is this extension's purpose; arguments are an
+    // argv array (no shell) and the prompt goes on stdin.
     // swamp-quality-ignore deno-command
     child = new Deno.Command(command, {
       args,
@@ -69,7 +71,7 @@ export async function runProcess(
   } catch (error) {
     if (error instanceof Deno.errors.NotFound) {
       throw new Error(
-        `${command} not found; install kiro-cli or set the kiroPath global argument`,
+        `${command} not found; install it or set the ${opts.pathArg} global argument`,
       );
     }
     throw error;

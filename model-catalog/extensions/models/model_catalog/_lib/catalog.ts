@@ -10,7 +10,7 @@
 import { z } from "npm:zod@4.6.5";
 
 /** Agent CLIs a tier can name; each has a matching `@cachehit/agents` model type. */
-export const ProviderSchema = z.enum(["kiro"]);
+export const ProviderSchema = z.enum(["kiro", "claude"]);
 
 /**
  * Role, work item and phase names; also used in data instance names. Single

@@ -3,7 +3,8 @@
  * tiers, for agent steps run with `@cachehit/agents`. `resolveDispatch` tells
  * a workflow step which model, tool profile and effort to use; a rate limit,
  * quota or unavailable model moves the role to its next tier. `usageReport`
- * stores credits, runs and failures per job and role from agent invocations.
+ * stores credits, cost, tokens, runs and failures per job and role from agent
+ * invocations.
  *
  * @module
  */
@@ -93,8 +94,11 @@ const ResolveDispatchArgsSchema = z.object({
 type ResolveDispatchArgs = z.infer<typeof ResolveDispatchArgsSchema>;
 
 const UsageReportArgsSchema = z.object({
-  agentModel: z.string().min(1).describe(
-    "@cachehit/agents/kiro model instance to read invocations from",
+  agentModel: z.union([
+    z.string().min(1),
+    z.array(z.string().min(1)).min(1),
+  ]).describe(
+    "@cachehit/agents model instance, or a list of them, to read invocations from",
   ),
   reportName: NameSchema.default("latest").describe(
     "Name of the stored report; a new run with the same name replaces it",
@@ -180,10 +184,15 @@ const decisionTags = (workItem: string, d: Decision) => ({
 /** Model catalog with tiered fallback for agent steps. */
 export const model = {
   type: "@cachehit/model-catalog",
-  version: "2026.10.27.1",
+  version: "2026.10.27.2",
   upgrades: [{
     toVersion: "2026.10.27.1",
     description: "Adds the usageReport method and usage resource",
+    upgradeAttributes: (old: Record<string, unknown>) => old,
+  }, {
+    toVersion: "2026.10.27.2",
+    description:
+      "Adds the claude provider; usage reports add costUsd and tokens and read several agent models",
     upgradeAttributes: (old: Record<string, unknown>) => old,
   }],
   globalArguments: GlobalArgsSchema,
@@ -204,7 +213,7 @@ export const model = {
     },
     usage: {
       description:
-        "Credits, runs, failures, retries and duration per job and role, read from @cachehit/agents invocations",
+        "Credits, cost, tokens, runs, failures, retries and duration per job and role, read from @cachehit/agents invocations",
       schema: UsageSchema,
       lifetime: "30d" as const,
       garbageCollection: 40,
@@ -346,19 +355,24 @@ export const model = {
     },
     usageReport: {
       description:
-        "Store a usage report (Kiro credits, no token counts) per job and role from the invocations of an @cachehit/agents model",
+        "Store a usage report (Kiro credits, Claude Code cost and tokens) per job and role from the invocations of @cachehit/agents models",
       arguments: UsageReportArgsSchema,
       execute: async (args: UsageReportArgs, ctx: Ctx) => {
         const g = ctx.globalArgs;
-        ctx.logger.info("Building usage report {report} from {agentModel}", {
+        const agentModels = [args.agentModel].flat();
+        ctx.logger.info("Building usage report {report} from {agentModels}", {
           report: args.reportName,
-          agentModel: args.agentModel,
+          agentModels: agentModels.join(", "),
         });
         if (!ctx.readModelData) throw new Error(NO_READ_MODEL_DATA);
+        const records = [];
+        for (const name of agentModels) {
+          records.push(...await ctx.readModelData(name, "invocation"));
+        }
         const usage = aggregateUsage(
-          await ctx.readModelData(args.agentModel, "invocation"),
+          records,
           {
-            agentModel: args.agentModel,
+            agentModels,
             reportName: args.reportName,
             workItem: args.workItem ?? null,
             workItemTagKey: g.signalTagKeys.workItem,
@@ -376,11 +390,12 @@ export const model = {
           usage,
         );
         ctx.logger.info(
-          "{report}: {invocations} invocations, {credits} credits, {jobs} jobs",
+          "{report}: {invocations} invocations, {credits} credits, ${cost}, {jobs} jobs",
           {
             report: args.reportName,
             invocations: usage.totals.invocations,
             credits: usage.totals.credits,
+            cost: usage.totals.costUsd ?? 0,
             jobs: usage.jobs.length,
           },
         );

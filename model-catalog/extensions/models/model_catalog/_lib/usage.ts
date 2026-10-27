@@ -1,6 +1,7 @@
 /**
- * Pure usage aggregation: sums `@cachehit/agents/kiro` invocation records into
- * credit, outcome, retry and duration buckets per job and catalog role.
+ * Pure usage aggregation: sums `@cachehit/agents` invocation records (Kiro or
+ * Claude Code) into credit, cost, token, outcome, retry and duration buckets
+ * per job and catalog role.
  * Nothing here reads or writes swamp data.
  *
  * @module
@@ -10,12 +11,23 @@
 import { z } from "npm:zod@4.6.5";
 import { catalogRoleFor } from "./catalog.ts";
 
-/** Invocation record attributes read from `@cachehit/agents/kiro` data. */
+const TokensSchema = z.object({
+  input: z.number(),
+  output: z.number(),
+  cacheRead: z.number(),
+  cacheCreation: z.number(),
+});
+type Tokens = z.infer<typeof TokensSchema>;
+
+/** Invocation record attributes read from `@cachehit/agents` data. */
 export const InvocationUsageSchema = z.object({
   invocationId: z.string(),
   startedAt: z.string(),
   success: z.boolean(),
   credits: z.number().nullable(),
+  // Absent on invocations stored before @cachehit/agents 2026.10.27.2.
+  costUsd: z.number().nullable().default(null),
+  tokens: TokensSchema.nullable().default(null),
   durationMs: z.number(),
   model: z.string(),
   tags: z.record(z.string(), z.string()).default({}),
@@ -30,6 +42,10 @@ export const BucketSchema = z.object({
   failed: z.number(),
   credits: z.number(),
   creditsMissing: z.number(),
+  /** Claude Code dollar cost; null when no invocation in the bucket reported any. */
+  costUsd: z.number().nullable(),
+  /** Token counts; null when no invocation in the bucket reported any. */
+  tokens: TokensSchema.nullable(),
   retries: z.number(),
   durationMs: z.number(),
   models: z.record(z.string(), z.number()),
@@ -39,11 +55,9 @@ export type Bucket = z.infer<typeof BucketSchema>;
 /** A usage report: totals, per role, per job and the unattributed rest. */
 export const UsageSchema = z.object({
   reportName: z.string(),
-  agentModel: z.string(),
+  agentModels: z.array(z.string()),
   workItem: z.string().nullable(),
   generatedAt: z.string(),
-  unit: z.literal("credits"),
-  tokensAvailable: z.literal(false),
   totals: BucketSchema,
   byRole: z.record(z.string(), BucketSchema),
   jobs: z.array(z.object({
@@ -72,9 +86,18 @@ const emptyBucket = (): Bucket => ({
   failed: 0,
   credits: 0,
   creditsMissing: 0,
+  costUsd: null,
+  tokens: null,
   retries: 0,
   durationMs: 0,
   models: {},
+});
+
+const addTokens = (a: Tokens | null, t: Tokens): Tokens => ({
+  input: (a?.input ?? 0) + t.input,
+  output: (a?.output ?? 0) + t.output,
+  cacheRead: (a?.cacheRead ?? 0) + t.cacheRead,
+  cacheCreation: (a?.cacheCreation ?? 0) + t.cacheCreation,
 });
 
 function add(b: Bucket, i: InvocationUsage): void {
@@ -83,6 +106,8 @@ function add(b: Bucket, i: InvocationUsage): void {
   else b.failed += 1;
   if (i.credits === null) b.creditsMissing += 1;
   else b.credits += i.credits;
+  if (i.costUsd !== null) b.costUsd = (b.costUsd ?? 0) + i.costUsd;
+  if (i.tokens !== null) b.tokens = addTokens(b.tokens, i.tokens);
   b.retries += i.attempts ? Math.max(i.attempts.length - 1, 0) : 0;
   b.durationMs += i.durationMs;
   b.models[i.model] =
@@ -90,9 +115,11 @@ function add(b: Bucket, i: InvocationUsage): void {
     1;
 }
 
+const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
 const round = (b: Bucket): Bucket => ({
   ...b,
-  credits: Math.round(b.credits * 1e6) / 1e6,
+  credits: round6(b.credits),
+  costUsd: b.costUsd === null ? null : round6(b.costUsd),
 });
 
 // Maps keep role and job names like "__proto__" from touching prototypes.
@@ -114,7 +141,7 @@ const roundAll = (map: Map<string, Bucket>) =>
 export function aggregateUsage(
   records: { attributes?: unknown; tags?: unknown }[],
   opts: {
-    agentModel: string;
+    agentModels: string[];
     reportName: string;
     workItem: string | null;
     workItemTagKey: string;
@@ -177,11 +204,9 @@ export function aggregateUsage(
 
   return {
     reportName: opts.reportName,
-    agentModel: opts.agentModel,
+    agentModels: opts.agentModels,
     workItem: opts.workItem,
     generatedAt: opts.generatedAt,
-    unit: "credits",
-    tokensAvailable: false,
     totals: round(totals),
     byRole: roundAll(byRole),
     jobs: [...jobs]

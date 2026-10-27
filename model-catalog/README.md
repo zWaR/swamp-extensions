@@ -2,17 +2,18 @@
 
 Choose which model each kind of work uses, and fall back to the next model when one is rate limited, out of quota or
 unavailable. It's built for agent steps run with
-[`@cachehit/agents`](https://github.com/zWaR/swamp-extensions/tree/main/agents) (Kiro CLI), and reads their invocation
-records directly.
+[`@cachehit/agents`](https://github.com/zWaR/swamp-extensions/tree/main/agents) (Kiro CLI or Claude Code), and reads
+their invocation records directly.
 
 It follows the design of `@mgreten/agent-provider-catalog`: a caller-owned table of roles and ordered tiers, fallback
 only on throttling-type failures, and idempotent records per (work item, role, attempt). The differences:
 
-- Tiers name Kiro models; `provider` defaults to `kiro`.
+- Tiers name Kiro or Claude Code models; `provider` (`kiro` or `claude`) defaults to `kiro`. A role can mix them, for
+  example a Kiro tier with a Claude Code fallback; the step runs the `@cachehit/agents` model type that matches the
+  resolved `provider`.
 - Roles are your own names (`implementer`, `docs-writer`, …), not a fixed list. `roleMap` still folds aliases onto them.
 - A tier can also set the `toolProfile` and `effort` the agent step should use.
-- `model-unavailable` advances a tier as well as `rate-limit` and `quota`, since another Kiro model is a real
-  alternative.
+- `model-unavailable` advances a tier as well as `rate-limit` and `quota`, since another model is a real alternative.
 - When the failure is read from an invocation, the current tier is inferred from that invocation's model.
 
 ## Prerequisites
@@ -70,7 +71,7 @@ Global arguments:
 | `signalTagKeys` | `{"workItem":"workItem","phase":"phase"}` | Invocation tag keys that identify the work item and phase  |
 
 Tier fields: `model` and `costClass` (`low`, `medium`, `high`; advisory) are required. `toolProfile` (`readonly`,
-`actor`), `effort` (`low` to `max`), `notes` and `provider` (`kiro`) are optional.
+`actor`), `effort` (`low` to `max`), `notes` and `provider` (`kiro` or `claude`) are optional.
 
 ## Methods
 
@@ -118,16 +119,18 @@ swamp model method run catalog recordFallback \
 
 ### `usageReport`
 
-Reads the invocations of an `@cachehit/agents` model and stores, as `usage--<reportName>`, Kiro credits, runs, failures,
-retries and duration per job and role:
+Reads the invocations of one or more `@cachehit/agents` models and stores, as `usage--<reportName>`, Kiro credits,
+Claude Code cost and tokens, runs, failures, retries and duration per job and role:
 
 ```bash
 swamp model method run catalog usageReport --input agentModel=kiro
+# A Claude Code orchestrator and Kiro workers in one report
+swamp model method run catalog usageReport --input 'agentModel:json=["claude","kiro"]'
 ```
 
 | Argument     | Default    | Purpose                                                                                  |
 | ------------ | ---------- | ---------------------------------------------------------------------------------------- |
-| `agentModel` | (required) | `@cachehit/agents/kiro` model instance to read invocations from                          |
+| `agentModel` | (required) | `@cachehit/agents` model instance, or a list of them, to read invocations from           |
 | `reportName` | `latest`   | Name of the stored report; a new run with the same name replaces it                      |
 | `workItem`   | (none)     | Keep only invocations whose tag under `signalTagKeys.workItem` equals this               |
 | `filterTags` | `{}`       | Keep only invocations with all of these tags, for example `{"workflowRunId":"<run ID>"}` |
@@ -136,8 +139,7 @@ swamp model method run catalog usageReport --input agentModel=kiro
 
 The report is a snapshot: each run overwrites it. It has:
 
-- `reportName`, `agentModel`, `workItem` (`null` without the argument) and `generatedAt`.
-- `unit`: `credits`. `tokensAvailable` is `false`, because Kiro reports credits, not tokens.
+- `reportName`, `agentModels` (always a list), `workItem` (`null` without the argument) and `generatedAt`.
 - `totals`: every counted invocation.
 - `byRole`: one bucket per role.
 - `jobs`: one entry per job, ordered by its earliest `startedAt`, each with `job`, `total` and `roles` (a bucket per
@@ -147,7 +149,11 @@ The report is a snapshot: each run overwrites it. It has:
 Each bucket has:
 
 - `invocations`, `succeeded` and `failed`.
-- `credits`: the sum of the known credits, rounded to 6 decimals. `creditsMissing` counts invocations without credits.
+- `credits`: the sum of the known Kiro credits, rounded to 6 decimals. `creditsMissing` counts invocations without
+  credits, which includes every Claude Code run.
+- `costUsd`: Claude Code's reported dollar cost, rounded to 6 decimals; `null` when no invocation in the bucket reported
+  a cost, as for Kiro.
+- `tokens`: `input`, `output`, `cacheRead` and `cacheCreation` tokens; `null` when no invocation reported any.
 - `retries`: extra attempts, from each invocation's `attempts`.
 - `durationMs`: summed duration.
 - `models`: invocation count per model.
@@ -195,7 +201,7 @@ In a workflow, pass the choice to the agent step with
 
 - Swamp tags every record a workflow step writes with `job`, `step`, `workflow` and `workflowRunId`, so runs inside a
   workflow get their job without any setup.
-- The `tags` input of `@cachehit/agents/kiro` `invoke` and `invokeAndParse`. Set `role` there on every agent run, and
+- The `tags` input of `@cachehit/agents` `invoke` and `invokeAndParse`. Set `role` there on every agent run, and
   `workItem` to filter by work item. Runs outside a workflow also need `job`.
 
 Runs without a job or role are counted only under `unattributed`. To report one workflow run:
@@ -218,17 +224,17 @@ swamp data get catalog usage--WI-42 --json
 | ---------- | ----------------------------------- | ------------------------------------------------ |
 | `dispatch` | `dispatch--<workItem>--<role>--<n>` | The tier and settings for attempt `n`            |
 | `fallback` | `fallback--<workItem>--<role>--<n>` | The decision, with from and to tiers and reasons |
-| `usage`    | `usage--<reportName>`               | Credits, runs and failures per job and role      |
+| `usage`    | `usage--<reportName>`               | Credits, cost, tokens and runs per job and role  |
 
 `dispatch` and `fallback` keep the last 40 versions and don't expire. `usage` keeps the last 40 versions for 30 days.
 
 ## Limitations
 
-- Only Kiro models; tiers can't mix agent CLIs yet.
 - The catalog decides; it doesn't run anything. Each step runs the agent itself.
 - Reading invocations needs a swamp version whose method context has `readModelData`. Otherwise pass `signalClass`;
   `usageReport` fails without it.
-- Usage is in Kiro credits only; there are no token counts.
+- Kiro reports credits and no tokens; Claude Code reports dollars and tokens and no credits. The report keeps them side
+  by side and doesn't convert between them.
 
 ## License
 

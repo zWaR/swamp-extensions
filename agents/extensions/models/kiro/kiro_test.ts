@@ -14,7 +14,7 @@ import {
   READONLY_AGENT_NAME,
   readonlyAgentConfig,
 } from "./kiro.ts";
-import { childEnv } from "./_lib/process.ts";
+import { childEnv } from "../_lib/process.ts";
 
 type Ctx = Parameters<typeof model.methods.invoke.execute>[1];
 type Written = { specName: string; data: Record<string, unknown> };
