@@ -302,7 +302,7 @@ Deno.test("usageReport stores totals per job and role from the invocations", asy
   assertEquals(u.specName, "usage");
   assertEquals(u.name, "usage--latest");
   const data = u.data as Usage;
-  assertEquals(data.agentModel, "kiro");
+  assertEquals(data.agentModels, ["kiro"]);
   assertEquals(data.workItem, null);
   assertEquals(data.totals, {
     invocations: 4,
@@ -310,6 +310,8 @@ Deno.test("usageReport stores totals per job and role from the invocations", asy
     failed: 1,
     credits: 15,
     creditsMissing: 0,
+    costUsd: null,
+    tokens: null,
     retries: 1,
     durationMs: 400,
     models: { "claude-haiku-4.5": 4 },
@@ -359,6 +361,36 @@ Deno.test("usageReport keeps only the work item's invocations under its report n
   assertEquals(data.totals.credits, 1);
   assertEquals(data.jobs.map((j) => j.job), ["j1"]);
   assertEquals(Object.keys(data.byRole), ["implementer"]);
+});
+
+Deno.test("usageReport reads every listed agent model into one report", async () => {
+  const { ctx, written, reads } = context({
+    invocations: {
+      kiro: [invocation({ tags: { job: "j1", role: "worker" }, credits: 3 })],
+      claude: [
+        invocation({
+          tags: { job: "j1", role: "orchestrator" },
+          credits: null,
+          costUsd: 0.5,
+          tokens: { input: 1, output: 2, cacheRead: 3, cacheCreation: 4 },
+        }),
+      ],
+    },
+  });
+  await model.methods.usageReport.execute({
+    agentModel: ["kiro", "claude"],
+    reportName: "latest",
+    filterTags: {},
+    jobTagKey: "job",
+    roleTagKey: "role",
+  }, ctx);
+  assertEquals(reads, ["kiro/invocation", "claude/invocation"]);
+  const data = written()[0].data as Usage;
+  assertEquals(data.agentModels, ["kiro", "claude"]);
+  assertEquals(data.totals.invocations, 2);
+  assertEquals(data.byRole.worker.credits, 3);
+  assertEquals(data.byRole.orchestrator.costUsd, 0.5);
+  assertEquals(data.byRole.orchestrator.tokens?.output, 2);
 });
 
 Deno.test("usageReport fails without readModelData and writes nothing", async () => {

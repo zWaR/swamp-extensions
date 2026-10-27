@@ -1,29 +1,35 @@
 # @cachehit/agents
 
 Run AI coding agents headless from swamp workflows and record what each run did and cost. A workflow can then hand
-simple subtasks to a cheap model, keep an expensive model for planning and review, and compare the credits each step
-used.
+simple subtasks to a cheap model, keep an expensive model for planning and review, and compare what each step cost: Kiro
+credits, or dollars and tokens for Claude Code.
 
 Supported agents:
 
-| Model type              | Agent                                          |
-| ----------------------- | ---------------------------------------------- |
-| `@cachehit/agents/kiro` | [Kiro CLI](https://kiro.dev/cli/) (`kiro-cli`) |
+| Model type                | Agent                                                                 |
+| ------------------------- | --------------------------------------------------------------------- |
+| `@cachehit/agents/kiro`   | [Kiro CLI](https://kiro.dev/cli/) (`kiro-cli`)                        |
+| `@cachehit/agents/claude` | [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`) |
+
+Both model types take the same methods, tool profiles and invocation records, so a workflow can mix them; the
+[Claude Code](#claude-code) section lists what differs.
 
 ## Prerequisites
 
 - [swamp](https://github.com/swamp-club/swamp) CLI
-- `kiro-cli` installed and logged in (`kiro-cli login`) on the machine that runs the method. The extension only starts
-  the CLI; it uses the CLI's own login.
+- `kiro-cli` installed and logged in (`kiro-cli login`), or `claude` installed and logged in (`claude /login` or
+  `ANTHROPIC_API_KEY`), on the machine that runs the method. The extension only starts the CLI; it uses the CLI's own
+  login.
 
 ## Installation
 
 ```bash
 swamp extension pull @cachehit/agents
 swamp model create @cachehit/agents/kiro kiro --global-arg defaultModel=claude-haiku-4.5
+swamp model create @cachehit/agents/claude claude --global-arg defaultModel=haiku
 ```
 
-Global arguments:
+Global arguments of `@cachehit/agents/kiro`:
 
 | Argument             | Default    | Purpose                                                                         |
 | -------------------- | ---------- | ------------------------------------------------------------------------------- |
@@ -87,14 +93,35 @@ swamp model method run kiro invokeAndParse \
   --input prompt='Split this task into subtasks. Answer as JSON: [{"id":..,"prompt":..,"difficulty":"simple|complex"}]. Task: ...'
 ```
 
+## Claude Code
+
+`@cachehit/agents/claude` runs `claude -p --output-format stream-json`. It has `invoke` and `invokeAndParse` with the
+arguments above except `agent`; Claude Code has no model list command, so there is no `listModels`. Its global arguments
+are `claudePath` (default `claude`), `defaultModel` (default `sonnet`) and the shared `defaultToolProfile`,
+`wallTimeoutMs`, `idleTimeoutMs`, `maxRetries` and `retryDelayMs`. `model` takes an alias (`haiku`, `sonnet`, `opus`) or
+a full model ID.
+
+```bash
+swamp model method run claude invoke \
+  --input prompt="Explain how the retry logic in src/client.ts works" \
+  --input cwd=/path/to/repo --input model=haiku
+```
+
+Its invocations record `costUsd` and `tokens` from Claude Code's result event; `credits` is null. `costUsd` is the cost
+Claude Code reports at API list prices, also when you are on a subscription plan. `requests` is the number of turns.
+
 ## Tool profiles
 
-- `readonly` (default): the agent can only read files and search them (`read`, `grep`, `glob`). It can't write
-  files, run commands or use MCP servers. The extension writes the Kiro agent `swamp-agents-kiro-readonly` to
-  `~/.kiro/agents/` the first time it's needed, and rewrites it if its content changes.
+- `readonly` (default): the agent can only read files and search them (`read`, `grep`, `glob`). It can't write files,
+  run commands or use MCP servers. The extension writes the Kiro agent `swamp-agents-kiro-readonly` to `~/.kiro/agents/`
+  the first time it's needed, and rewrites it if its content changes.
 - `actor`: the agent gets every tool of its Kiro agent and `--trust-all-tools`, because a headless run can't answer
   permission prompts. It can edit files and run commands in `cwd` without asking. Use it only for working directories
   and prompts you trust, ideally a dedicated worktree.
+
+For Claude Code, `readonly` passes `--tools Read,Grep,Glob`, `--strict-mcp-config` and `--permission-mode dontAsk`: only
+those three built-in tools, no MCP servers, and anything that would need a permission prompt is denied. `--tools` alone
+leaves MCP tools available. `actor` passes `--dangerously-skip-permissions` and keeps your MCP servers and settings.
 
 Kiro's `--trust-tools` flag alone doesn't restrict a headless run: in testing with Kiro CLI 2.28.0, the default agent
 still ran a shell command that wrote a file. The `readonly` profile therefore restricts the tool list through the agent
@@ -132,7 +159,9 @@ Usage fields of an invocation:
 | Field      | Content                                                                                      |
 | ---------- | -------------------------------------------------------------------------------------------- |
 | `credits`  | Kiro credits summed over every attempt, retries included; null when no attempt reported any  |
-| `requests` | Model requests summed over every attempt, the same way as `credits`                          |
+| `requests` | Model requests (Claude Code: turns) summed over every attempt, the same way as `credits`     |
+| `costUsd`  | Claude Code's reported cost in US dollars, summed the same way; null for Kiro                |
+| `tokens`   | `input`, `output`, `cacheRead` and `cacheCreation` tokens summed the same way; null for Kiro |
 | `attempts` | One entry per attempt, in order; the top-level outcome fields describe the last attempt only |
 
 Each `attempts` entry:
@@ -140,22 +169,24 @@ Each `attempts` entry:
 | Field          | Content                                                              |
 | -------------- | -------------------------------------------------------------------- |
 | `attempt`      | Attempt number, starting at 1                                        |
-| `exitCode`     | Exit code of `kiro-cli`                                              |
+| `exitCode`     | Exit code of the CLI                                                 |
 | `failureClass` | Failure class of the attempt; null when it succeeded                 |
 | `error`        | Error message of the attempt; null when it succeeded                 |
 | `credits`      | Kiro credits metered for the attempt; null when Kiro reported none   |
 | `requests`     | Model requests metered for the attempt; null when Kiro reported none |
-| `durationMs`   | Run time of the `kiro-cli` process                                   |
+| `costUsd`      | Dollar cost of the attempt; null when the CLI reported none          |
+| `tokens`       | Token counts of the attempt; null when the CLI reported none         |
+| `durationMs`   | Run time of the CLI process                                          |
 
 Failure classes: `rate-limit`, `quota`, `auth`, `model-unavailable`, `timeout`, `contract-violation`, `infrastructure`,
 `unknown`. Only `rate-limit` and killed processes (exit 137 or 143) are retried unchanged.
 
 ## Limitations
 
-- Only Kiro CLI is supported so far.
 - A retry reruns the whole prompt. With the `actor` profile, changes from the failed attempt stay in `cwd`.
-- On timeout, the extension signals `kiro-cli` itself, not commands that its tools started.
-- Credits come from Kiro's metering events. When Kiro reports none, `credits` is null.
+- On timeout, the extension signals the CLI itself, not commands that its tools started.
+- Credits come from Kiro's metering events, cost and tokens from Claude Code's result event. When the CLI reports none,
+  the field is null.
 - The child process gets your environment without `SWAMP_*` variables, apart from `SWAMP_REPO_DIR`, `SWAMP_SERVER_URL`
   and `SWAMP_CLUB_URL`.
 

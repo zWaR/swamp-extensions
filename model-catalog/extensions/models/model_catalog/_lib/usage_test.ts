@@ -11,7 +11,7 @@ import {
 const NOW = "2026-10-26T12:00:00.000Z";
 
 const OPTS = {
-  agentModel: "kiro",
+  agentModels: ["kiro"],
   reportName: "weekly",
   workItem: null,
   workItemTagKey: "workItem",
@@ -46,6 +46,8 @@ const bucket = (over: Partial<Bucket> = {}): Bucket => ({
   failed: 0,
   credits: 0,
   creditsMissing: 0,
+  costUsd: null,
+  tokens: null,
   retries: 0,
   durationMs: 0,
   models: {},
@@ -301,19 +303,15 @@ Deno.test("aggregateUsage rounds credits and returns a valid report", () => {
   assertEquals(
     {
       reportName: u.reportName,
-      agentModel: u.agentModel,
+      agentModels: u.agentModels,
       workItem: u.workItem,
       generatedAt: u.generatedAt,
-      unit: u.unit,
-      tokensAvailable: u.tokensAvailable,
     },
     {
       reportName: "weekly",
-      agentModel: "kiro",
+      agentModels: ["kiro"],
       workItem: null,
       generatedAt: NOW,
-      unit: "credits",
-      tokensAvailable: false,
     },
   );
 });
@@ -325,4 +323,28 @@ Deno.test("aggregateUsage with no records returns empty buckets", () => {
   assertEquals(u.byRole, {});
   assertEquals(u.jobs, []);
   assertEquals(UsageSchema.parse(u), u);
+});
+
+Deno.test("aggregateUsage sums Claude Code cost and tokens next to Kiro credits", () => {
+  const tokens = { input: 10, output: 20, cacheRead: 30, cacheCreation: 40 };
+  const u = aggregateUsage([
+    rec({ credits: 2 }),
+    rec({ credits: null, costUsd: 0.1, tokens, model: "opus" }),
+    rec({ credits: null, costUsd: 0.2, tokens, model: "opus" }),
+  ], OPTS);
+  assertEquals(u.totals.credits, 2);
+  assertEquals(u.totals.creditsMissing, 2);
+  assertEquals(u.totals.costUsd, 0.3);
+  assertEquals(u.totals.tokens, {
+    input: 20,
+    output: 40,
+    cacheRead: 60,
+    cacheCreation: 80,
+  });
+  assertEquals(u.totals.models, { "claude-haiku-4.5": 1, opus: 2 });
+  assertEquals(UsageSchema.parse(u), u);
+  // A Kiro-only bucket reports no cost or tokens rather than zero.
+  const kiro = aggregateUsage([rec({ credits: 2 })], OPTS);
+  assertEquals(kiro.totals.costUsd, null);
+  assertEquals(kiro.totals.tokens, null);
 });

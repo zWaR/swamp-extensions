@@ -1,5 +1,13 @@
 # Release notes
 
+## 2026.10.27.2
+
+**Added:** Tiers can use `provider: claude` for `@cachehit/agents/claude`. `usageReport` sums Claude Code `costUsd` and
+`tokens` per bucket (null when no invocation reported them), and `agentModel` takes a list of agent models.
+
+**Changed:** The usage report has `agentModels` (a list) instead of `agentModel`, and no longer has `unit` or
+`tokensAvailable`.
+
 ## 2026.10.27.1
 
 **Added:** `usageReport` and the `usage` resource. It reads the invocations of an `@cachehit/agents` model and stores

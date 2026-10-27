@@ -27,7 +27,7 @@ Deno.test("CatalogSchema defaults the provider to kiro and rejects bad tables", 
     {
       version: "1",
       roles: {
-        r: { tiers: [{ provider: "claude", model: "x", costClass: "low" }] },
+        r: { tiers: [{ provider: "gemini", model: "x", costClass: "low" }] },
       },
     },
     {

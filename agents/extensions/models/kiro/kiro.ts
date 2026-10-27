@@ -8,16 +8,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { z } from "npm:zod@4.6.5";
-import { childEnv, type ProcessResult, runProcess } from "./_lib/process.ts";
+import { childEnv, runProcess } from "../_lib/process.ts";
 import {
-  classifyFailure,
-  FAILURE_CLASSES,
-  type FailureClass,
-  isRetryable,
-  parseJsonAnswer,
-  parseStream,
-  type StreamSummary,
-} from "./_lib/stream.ts";
+  commonGlobalArgs,
+  commonInvokeArgs,
+  type Ctx as AgentCtx,
+  failIfNotOk,
+  InvocationSchema,
+  runAgent,
+  type ToolProfile,
+  TranscriptSchema,
+} from "../_lib/agent.ts";
+import { parseStream } from "./_lib/stream.ts";
 
 /** Kiro agent written to ~/.kiro/agents for the readonly tool profile. */
 export const READONLY_AGENT_NAME = "swamp-agents-kiro-readonly";
@@ -46,11 +48,6 @@ export function readonlyAgentConfig(): string {
   }\n`;
 }
 
-const ToolProfileSchema = z.enum(["readonly", "actor"]);
-type ToolProfile = z.infer<typeof ToolProfileSchema>;
-const EffortSchema = z.enum(["low", "medium", "high", "xhigh", "max"]);
-const TimeoutSchema = z.number().int().min(1_000).max(21_600_000);
-
 const GlobalArgsSchema = z.object({
   kiroPath: z.string().min(1).default("kiro-cli").describe(
     "kiro-cli executable, resolved on PATH unless absolute",
@@ -58,106 +55,23 @@ const GlobalArgsSchema = z.object({
   defaultModel: z.string().min(1).default("auto").describe(
     "Kiro model ID used when invoke omits model; see listModels",
   ),
-  defaultToolProfile: ToolProfileSchema.default("readonly").describe(
-    "readonly: read and search files only; actor: every tool of the agent, trusted without prompts",
-  ),
   defaultAgent: z.string().min(1).optional().describe(
     "Kiro agent (context profile) for the actor profile; Kiro's default agent when unset",
   ),
-  wallTimeoutMs: TimeoutSchema.default(1_800_000).describe(
-    "Kill a run after this long in total",
-  ),
-  idleTimeoutMs: TimeoutSchema.default(600_000).describe(
-    "Kill a run that writes no output for this long",
-  ),
-  maxRetries: z.number().int().min(0).max(5).default(2).describe(
-    "Retries for rate limits, killed processes and, in invokeAndParse, unparseable answers",
-  ),
-  retryDelayMs: z.number().int().min(0).max(300_000).default(5_000).describe(
-    "Base backoff; attempt n waits n times this",
-  ),
+  ...commonGlobalArgs,
 });
 type GlobalArgs = z.infer<typeof GlobalArgsSchema>;
 
 const InvokeArgsSchema = z.object({
-  prompt: z.string().min(1).describe("Task for the agent; sent on stdin"),
+  ...commonInvokeArgs,
   model: z.string().min(1).optional().describe(
     "Kiro model ID, for example claude-haiku-4.5; defaults to defaultModel",
-  ),
-  toolProfile: ToolProfileSchema.optional().describe(
-    "Overrides defaultToolProfile",
   ),
   agent: z.string().min(1).optional().describe(
     "Kiro agent for the actor profile; overrides defaultAgent",
   ),
-  effort: EffortSchema.optional().describe(
-    "Reasoning effort, for models that support it",
-  ),
-  cwd: z.string().min(1).optional().describe(
-    "Working directory for the agent; defaults to the swamp process directory",
-  ),
-  invocationId: z.string().regex(/^[A-Za-z0-9._-]{1,128}$/).optional()
-    .describe(
-      "Names the invocation-<id> and transcript-<id> data; a random UUID when unset",
-    ),
-  tags: z.record(z.string(), z.string()).default({}).describe(
-    "Key-value labels stored with the invocation, for example a task role",
-  ),
-  wallTimeoutMs: TimeoutSchema.optional(),
-  idleTimeoutMs: TimeoutSchema.optional(),
 });
 type InvokeArgs = z.infer<typeof InvokeArgsSchema>;
-
-const InvocationSchema = z.object({
-  invocationId: z.string(),
-  model: z.string(),
-  toolProfile: ToolProfileSchema,
-  agent: z.string().nullable(),
-  effort: EffortSchema.nullable(),
-  cwd: z.string(),
-  promptPreview: z.string(),
-  promptTruncated: z.boolean(),
-  promptSha256: z.string(),
-  success: z.boolean(),
-  exitCode: z.number(),
-  failureClass: z.enum(FAILURE_CLASSES).nullable(),
-  error: z.string().nullable(),
-  retries: z.number(),
-  durationMs: z.number(),
-  sessionId: z.string().nullable(),
-  stopReason: z.string().nullable(),
-  credits: z.number().nullable(),
-  requests: z.number().nullable(),
-  attempts: z.array(z.object({
-    attempt: z.number(),
-    exitCode: z.number(),
-    failureClass: z.enum(FAILURE_CLASSES).nullable(),
-    error: z.string().nullable(),
-    credits: z.number().nullable(),
-    requests: z.number().nullable(),
-    durationMs: z.number(),
-  })),
-  turnDurationMs: z.number().nullable(),
-  contextUsagePercentage: z.number().nullable(),
-  toolCalls: z.array(z.object({
-    name: z.string(),
-    title: z.string(),
-    status: z.string().nullable(),
-  })),
-  outputPreview: z.string(),
-  outputBytes: z.number(),
-  parsed: z.unknown().optional(),
-  tags: z.record(z.string(), z.string()),
-  startedAt: z.string(),
-  finishedAt: z.string(),
-});
-
-const TranscriptSchema = z.object({
-  invocationId: z.string(),
-  prompt: z.string(),
-  output: z.string(),
-  stderrTail: z.string(),
-});
 
 const ModelListSchema = z.object({
   defaultModel: z.string().nullable(),
@@ -172,17 +86,7 @@ const ModelListSchema = z.object({
   listedAt: z.string(),
 });
 
-type Handle = Record<string, unknown>;
-type Logger = (message: string, fields?: Record<string, unknown>) => void;
-type Ctx = {
-  globalArgs: GlobalArgs;
-  writeResource: (
-    specName: string,
-    name: string,
-    data: Record<string, unknown>,
-  ) => Promise<Handle>;
-  logger: { info: Logger; warning: Logger };
-};
+type Ctx = AgentCtx<GlobalArgs>;
 
 /** Command-line arguments for one headless `kiro-cli chat` run. */
 export function buildChatArgs(opts: {
@@ -227,212 +131,42 @@ async function ensureReadonlyAgent(home: string | undefined): Promise<void> {
   await Deno.writeTextFile(path, want);
 }
 
-async function sha256(text: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(text),
-  );
-  return Array.from(
-    new Uint8Array(digest),
-    (b) => b.toString(16).padStart(2, "0"),
-  )
-    .join("");
-}
-
-interface Attempt {
-  process: ProcessResult;
-  stream: StreamSummary;
-  ok: boolean;
-  failure: FailureClass | null;
-  error: string | null;
-  parsed: unknown | null;
-}
-
-/** Judges one finished process run. */
-function judge(process: ProcessResult, requireJson: boolean): Attempt {
-  const stream = parseStream(process.stdout);
-  const ran = process.code === 0 && !process.timedOut && !stream.error &&
-    stream.status === "success";
-  const parsed = ran && requireJson ? parseJsonAnswer(stream.text) : null;
-  if (ran && (!requireJson || parsed !== null)) {
-    return { process, stream, ok: true, failure: null, error: null, parsed };
-  }
-  const error = ran
-    ? "answer contains no JSON object or array"
-    : process.timedOut
-    ? `${process.timedOut} timeout after ${process.durationMs}ms`
-    : stream.error?.message ??
-      (stream.status && stream.status !== "success"
-        ? `run finished with status ${stream.status}`
-        : process.stderr.trim().slice(-500) || `exit ${process.code}`);
-  const failure: FailureClass = ran ? "contract-violation" : classifyFailure(
-    `${error}\n${process.stderr}`,
-    process.code,
-    process.timedOut !== null,
-  );
-  return { process, stream, ok: false, failure, error, parsed: null };
-}
-
-/** Sum of the non-null values; null when every value is null. */
-const sumOrNull = (values: (number | null)[]): number | null =>
-  values.some((v) => v !== null)
-    ? values.reduce<number>((total, v) => total + (v ?? 0), 0)
-    : null;
-
 /** Runs Kiro, retrying rate limits, killed processes and (optionally) non-JSON answers. */
-async function invoke(
-  args: InvokeArgs,
-  ctx: Ctx,
-  requireJson: boolean,
-): Promise<{ handles: Handle[]; attempt: Attempt }> {
+function invoke(args: InvokeArgs, ctx: Ctx, requireJson: boolean) {
   const g = ctx.globalArgs;
   const toolProfile = args.toolProfile ?? g.defaultToolProfile;
-  const agent = toolProfile === "actor"
-    ? args.agent ?? g.defaultAgent ?? null
-    : null;
   if (toolProfile === "readonly" && args.agent) {
     throw new Error(
       "agent applies only to toolProfile actor; readonly uses its own read-only agent",
     );
   }
+  const agent = toolProfile === "actor"
+    ? args.agent ?? g.defaultAgent ?? null
+    : null;
   const model = args.model ?? g.defaultModel;
-  const effort = args.effort ?? null;
-  const cwd = args.cwd ?? Deno.cwd();
-  const cwdInfo = await Deno.stat(cwd).catch(() => null);
-  if (!cwdInfo?.isDirectory) {
-    throw new Error(`cwd ${cwd} is not an existing directory`);
-  }
-  const invocationId = args.invocationId ?? crypto.randomUUID();
-  const env = childEnv(Deno.env.toObject());
-  if (toolProfile === "readonly") await ensureReadonlyAgent(env.HOME);
-  ctx.logger.info("Running Kiro {model} ({profile}) in {cwd} as {id}", {
-    model,
-    profile: toolProfile,
-    cwd,
-    id: invocationId,
-  });
-
-  const cliArgs = buildChatArgs({ model, toolProfile, agent, effort });
-  const startedAt = new Date();
-  let prompt = args.prompt;
-  let retries = 0;
-  let attempt: Attempt;
-  const attempts: {
-    attempt: number;
-    exitCode: number;
-    failureClass: FailureClass | null;
-    error: string | null;
-    credits: number | null;
-    requests: number | null;
-    durationMs: number;
-  }[] = [];
-  while (true) {
-    const process = await runProcess(g.kiroPath, cliArgs, {
-      cwd,
-      stdin: prompt,
-      env,
-      wallTimeoutMs: args.wallTimeoutMs ?? g.wallTimeoutMs,
-      idleTimeoutMs: args.idleTimeoutMs ?? g.idleTimeoutMs,
-    });
-    attempt = judge(process, requireJson);
-    attempts.push({
-      attempt: attempts.length + 1,
-      exitCode: process.code,
-      failureClass: attempt.failure,
-      error: attempt.error,
-      credits: attempt.stream.credits,
-      requests: attempt.stream.requests,
-      durationMs: process.durationMs,
-    });
-    const retry = !attempt.ok && retries < g.maxRetries &&
-      (attempt.failure === "contract-violation" ||
-        isRetryable(attempt.failure!, process.code));
-    if (!retry) break;
-    retries++;
-    ctx.logger.warning("Kiro {failure}, retrying ({n}/{max})", {
-      failure: attempt.failure,
-      n: retries,
-      max: g.maxRetries,
-    });
-    if (attempt.failure === "contract-violation") {
-      prompt =
-        `${args.prompt}\n\nYour previous answer contained no valid JSON. Answer again with exactly one JSON value and nothing else.`;
-    }
-    await new Promise((r) => setTimeout(r, g.retryDelayMs * retries));
-  }
-
-  const { process, stream } = attempt;
-  const credits = sumOrNull(attempts.map((a) => a.credits));
-  const invocation = await ctx.writeResource(
-    "invocation",
-    `invocation-${invocationId}`,
+  return runAgent(
     {
-      invocationId,
+      label: "Kiro",
+      command: g.kiroPath,
+      pathArg: "kiroPath",
+      cliArgs: buildChatArgs({
+        model,
+        toolProfile,
+        agent,
+        effort: args.effort ?? null,
+      }),
+      parse: parseStream,
       model,
       toolProfile,
       agent,
-      effort,
-      cwd,
-      promptPreview: args.prompt.slice(0, 500),
-      promptTruncated: args.prompt.length > 500,
-      promptSha256: await sha256(args.prompt),
-      success: attempt.ok,
-      exitCode: process.code,
-      failureClass: attempt.failure,
-      error: attempt.error,
-      retries,
-      durationMs: Date.now() - startedAt.getTime(),
-      sessionId: stream.sessionId,
-      stopReason: stream.stopReason,
-      credits,
-      requests: sumOrNull(attempts.map((a) => a.requests)),
-      attempts,
-      turnDurationMs: stream.turnDurationMs,
-      contextUsagePercentage: stream.contextUsagePercentage,
-      toolCalls: stream.toolCalls.map(({ name, title, status }) => ({
-        name,
-        title,
-        status,
-      })),
-      outputPreview: stream.text.slice(0, 1000),
-      outputBytes: new TextEncoder().encode(stream.text).length,
-      ...(requireJson ? { parsed: attempt.parsed } : {}),
-      tags: args.tags,
-      startedAt: startedAt.toISOString(),
-      finishedAt: new Date().toISOString(),
+      prepare: toolProfile === "readonly"
+        ? (env) => ensureReadonlyAgent(env.HOME)
+        : undefined,
     },
+    args,
+    ctx,
+    requireJson,
   );
-  const transcript = await ctx.writeResource(
-    "transcript",
-    `transcript-${invocationId}`,
-    {
-      invocationId,
-      prompt: args.prompt,
-      output: stream.text,
-      stderrTail: process.stderr.slice(-4000),
-    },
-  );
-  ctx.logger.info(
-    "Kiro {model}: {status} in {ms}ms, {credits} credits, {tools} tool calls, {retries} retries",
-    {
-      model,
-      status: attempt.ok ? "ok" : attempt.failure,
-      ms: process.durationMs,
-      credits: credits ?? "unknown",
-      tools: stream.toolCalls.length,
-      retries,
-    },
-  );
-  return { handles: [invocation, transcript], attempt };
-}
-
-/** Throws after the records are stored, so a workflow step fails visibly. */
-function failIfNotOk(attempt: Attempt): void {
-  if (!attempt.ok) {
-    throw new Error(
-      `Kiro ${attempt.failure}: ${attempt.error?.slice(0, 300) ?? "failed"}`,
-    );
-  }
 }
 
 /** Parses `kiro-cli chat --list-models --format json`. */
@@ -464,11 +198,16 @@ const lifetime = "30d" as const;
 /** Kiro CLI agent model. */
 export const model = {
   type: "@cachehit/agents/kiro",
-  version: "2026.10.27.1",
+  version: "2026.10.27.2",
   upgrades: [{
     toVersion: "2026.10.27.1",
     description:
       "Adds attempts and requests to invocation records; credits now sum every attempt",
+    upgradeAttributes: (old: Record<string, unknown>) => old,
+  }, {
+    toVersion: "2026.10.27.2",
+    description:
+      "Adds costUsd and tokens to invocation records, shared with @cachehit/agents/claude; always null for Kiro",
     upgradeAttributes: (old: Record<string, unknown>) => old,
   }],
   globalArguments: GlobalArgsSchema,
@@ -500,7 +239,7 @@ export const model = {
       arguments: InvokeArgsSchema,
       execute: async (args: InvokeArgs, ctx: Ctx) => {
         const { handles, attempt } = await invoke(args, ctx, false);
-        failIfNotOk(attempt);
+        failIfNotOk("Kiro", attempt);
         return { dataHandles: handles };
       },
     },
@@ -510,7 +249,7 @@ export const model = {
       arguments: InvokeArgsSchema,
       execute: async (args: InvokeArgs, ctx: Ctx) => {
         const { handles, attempt } = await invoke(args, ctx, true);
-        failIfNotOk(attempt);
+        failIfNotOk("Kiro", attempt);
         return { dataHandles: handles };
       },
     },
@@ -532,6 +271,7 @@ export const model = {
             env: childEnv(Deno.env.toObject()),
             wallTimeoutMs: 60_000,
             idleTimeoutMs: 60_000,
+            pathArg: "kiroPath",
           },
         );
         if (result.code !== 0) {

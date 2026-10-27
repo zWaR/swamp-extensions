@@ -1,11 +1,11 @@
 manifestVersion: 1
 name: "@cachehit/model-catalog"
 license: Apache-2.0
-version: "2026.10.27.1"
+version: "2026.10.27.2"
 description: |
   Choose which model each kind of work uses, and fall back to the next model
   when one is rate limited, out of quota or unavailable. Built for agent
-  steps run with `@cachehit/agents` (Kiro CLI).
+  steps run with `@cachehit/agents` (Kiro CLI or Claude Code).
 
   You own the catalog: each role (for example `implementer`, `reviewer`,
   `classifier`) has ordered tiers of `{model, costClass, toolProfile, effort}`.
@@ -44,8 +44,9 @@ description: |
   - **resolveDispatch**: store the model, tool profile and effort for one
     attempt, applying a fallback when a failure signal is given or read.
   - **recordFallback**: store only the fallback decision for a signal.
-  - **usageReport**: store Kiro credits, runs, failures, retries and duration
-    per job and role, read from an @cachehit/agents model's invocations.
+  - **usageReport**: store Kiro credits, Claude Code cost and tokens, runs,
+    failures, retries and duration per job and role, read from the
+    invocations of one or more @cachehit/agents models.
 repository: "https://github.com/zWaR/swamp-extensions"
 models:
   - model_catalog/model_catalog.ts
@@ -53,6 +54,7 @@ labels:
   - ai
   - agent
   - kiro
+  - claude-code
   - model-routing
   - fallback
 platforms:
