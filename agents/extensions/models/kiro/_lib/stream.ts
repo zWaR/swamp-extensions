@@ -25,6 +25,8 @@ export interface StreamSummary {
   error: { stage: string | null; message: string } | null;
   /** Kiro credits metered for the turn; null when Kiro reported none. */
   credits: number | null;
+  /** Model requests metered in the turn: entries in the last meteringUsage event; null when there is none. */
+  requests: number | null;
   turnDurationMs: number | null;
   contextUsagePercentage: number | null;
   toolCalls: ToolCall[];
@@ -51,6 +53,7 @@ export function parseStream(stdout: string): StreamSummary {
     text: "",
     error: null,
     credits: null,
+    requests: null,
     turnDurationMs: null,
     contextUsagePercentage: null,
     toolCalls: [],
@@ -83,10 +86,16 @@ export function parseStream(stdout: string): StreamSummary {
         // Kiro sends meteringUsage once per turn (one entry per model
         // request), and a headless run is a single turn.
         if (Array.isArray(data.meteringUsage)) {
-          summary.credits = data.meteringUsage
+          const entries = data.meteringUsage
             .map(obj)
-            .filter((m) => m && /^credit/i.test(str(m.unit) ?? ""))
-            .reduce((total, m) => total + (num(m!.value) ?? 0), 0);
+            .filter((m): m is Json =>
+              !!m && /^credit/i.test(str(m.unit) ?? "")
+            );
+          summary.credits = entries.reduce(
+            (total, m) => total + (num(m.value) ?? 0),
+            0,
+          );
+          summary.requests = entries.length;
         }
         break;
       }
