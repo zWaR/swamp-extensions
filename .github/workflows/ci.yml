@@ -58,8 +58,9 @@ jobs:
               echo "::error::$dir: swamp extension quality did not return JSON"
               printf '%s\n' "$result"
               failed=1
-            elif printf '%s' "$result" | jq -e '.status == "passed" and .percentage == 100' >/dev/null; then
-              echo "$dir: quality passed (100%)"
+            # Provisional factors (e.g. repository-verified) don't count toward the percentage, so gate on factors instead
+            elif printf '%s' "$result" | jq -e '.status == "passed" and all(.factors[]; .status == "earned" or .status == "provisional")' >/dev/null; then
+              echo "$dir: quality passed (all factors earned or provisional)"
             else
               echo "::error::$dir: quality gate failed"
               printf '%s' "$result" | jq '{status, percentage, missing: [.factors[]? | select(.status != "earned" and .status != "provisional") | .id]}'
