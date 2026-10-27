@@ -1,5 +1,11 @@
 # Release notes
 
+## 2026.10.27.3
+
+**Added:** The workflow report `@cachehit/model-catalog/usage-summary`. Required in a workflow, it shows at the end of
+the run the Kiro credits, Claude Code cost and tokens, agent time and wall time of each `@cachehit/agents` run and each
+role.
+
 ## 2026.10.27.2
 
 **Added:** Tiers can use `provider: claude` for `@cachehit/agents/claude`. `usageReport` sums Claude Code `costUsd` and
