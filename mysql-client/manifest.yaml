@@ -1,0 +1,66 @@
+manifestVersion: 1
+name: "@cachehit/mysql-client"
+license: Apache-2.0
+version: "2026.10.29.1"
+description: |
+  Read-only client for MySQL and Aurora MySQL. Checks connectivity, runs
+  parameterized SELECT queries and snapshots table and column metadata, all
+  stored as swamp data.
+
+  The network path is yours: point `host` and `port` at the database, or at
+  the local end of a tunnel or port-forward you start yourself. The model
+  opens no tunnels and runs no other programs. When nothing is listening it
+  says so instead of printing a socket error.
+
+  Writes are refused twice: `query` only accepts SELECT, WITH, SHOW,
+  DESC/DESCRIBE and EXPLAIN statements, and runs them inside a read-only
+  transaction that is always rolled back.
+
+  ## Quick Start
+
+  ```bash
+  swamp extension pull @cachehit/mysql-client
+
+  # Store the database credentials (prompts for each value)
+  swamp vault create local_encryption db
+  swamp vault put db USER
+  swamp vault put db PASSWORD
+
+  swamp model create @cachehit/mysql-client my-db \
+    --global-arg host=127.0.0.1 \
+    --global-arg port=3308 \
+    --global-arg database=app \
+    --global-arg 'user=${{ vault.get("db", "USER") }}' \
+    --global-arg 'password=${{ vault.get("db", "PASSWORD") }}'
+
+  swamp model method run my-db check
+  swamp model method run my-db query --input-file queries.yaml
+  swamp model method run my-db schema
+  ```
+
+  ## Methods
+
+  - **check**: connect and record the server version, Aurora version (null
+    on plain MySQL), current user, database and read-only flag.
+  - **query**: run one or more named, parameterized read statements over a
+    single connection. Each result is stored as `result-<name>` with its
+    columns, rows, row count, truncation flag and duration.
+  - **schema**: record the tables and columns of a database from
+    `information_schema` as `schema-<database>`.
+repository: "https://github.com/zWaR/swamp-extensions"
+models:
+  - mysql_client/mysql_client.ts
+labels:
+  - mysql
+  - aurora
+  - database
+  - sql
+  - read-only
+platforms:
+  - linux-x86_64
+  - linux-aarch64
+  - darwin-x86_64
+  - darwin-aarch64
+additionalFiles:
+  - README.md
+  - LICENSE.md
