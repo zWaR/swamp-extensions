@@ -19,7 +19,7 @@ import {
   type ToolProfile,
   TranscriptSchema,
 } from "../_lib/agent.ts";
-import { parseStream } from "./_lib/stream.ts";
+import { parseStream, progressOf } from "./_lib/stream.ts";
 
 /** Built-in tools of the readonly profile; MCP servers are not loaded. */
 export const READONLY_TOOLS = ["Read", "Grep", "Glob"];
@@ -92,6 +92,7 @@ function invoke(args: InvokeArgs, ctx: Ctx, requireJson: boolean) {
       pathArg: "claudePath",
       cliArgs: buildArgs({ model, toolProfile, effort: args.effort ?? null }),
       parse: parseStream,
+      progress: progressOf,
       model,
       toolProfile,
       agent: null,
@@ -107,7 +108,13 @@ const lifetime = "30d" as const;
 /** Claude Code agent model. */
 export const model = {
   type: "@cachehit/agents/claude",
-  version: "2026.10.27.2",
+  version: "2026.11.03.1",
+  upgrades: [{
+    toVersion: "2026.11.03.1",
+    description:
+      "Logs agent progress while a run is going; stored records are unchanged",
+    upgradeAttributes: (old: Record<string, unknown>) => old,
+  }],
   globalArguments: GlobalArgsSchema,
   resources: {
     invocation: {

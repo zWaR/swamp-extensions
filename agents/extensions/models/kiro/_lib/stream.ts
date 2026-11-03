@@ -125,3 +125,33 @@ export function parseStream(stdout: string): KiroStreamSummary {
     : chunks.join("");
   return summary;
 }
+
+/**
+ * A one-line progress note for one stream line: a started or failed tool call,
+ * or null for every other event. Message text arrives in word-sized chunks, so
+ * it is left out.
+ */
+export function progressOf(line: string): string | null {
+  if (!line.trim().startsWith("{")) return null;
+  let event: Json | undefined;
+  try {
+    event = obj(JSON.parse(line));
+  } catch {
+    return null;
+  }
+  if (event?.type === "runError") {
+    return `error: ${str(obj(event.data)?.message) ?? "unknown error"}`;
+  }
+  const update = obj(obj(event?.data)?.update);
+  if (event?.type !== "sessionUpdate" || !update) return null;
+  const name = str(obj(obj(update._meta)?.kiro)?.toolName) ??
+    str(update.kind) ?? "unknown";
+  const title = (str(update.title) ?? "").slice(0, 200);
+  if (update.sessionUpdate === "tool_call") return `tool ${name}: ${title}`;
+  if (
+    update.sessionUpdate === "tool_call_update" && update.status === "failed"
+  ) {
+    return `tool failed ${name}: ${title}`;
+  }
+  return null;
+}

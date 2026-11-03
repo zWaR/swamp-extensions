@@ -166,6 +166,9 @@ export const commonGlobalArgs = {
   retryDelayMs: z.number().int().min(0).max(300_000).default(5_000).describe(
     "Base backoff; attempt n waits n times this",
   ),
+  progress: z.boolean().default(true).describe(
+    "Log each tool call (and, for Claude Code, each message) while a run is going",
+  ),
 };
 
 /** Invoke arguments every agent model takes, besides `model`. */
@@ -189,6 +192,9 @@ export const commonInvokeArgs = {
   ),
   wallTimeoutMs: TimeoutSchema.optional(),
   idleTimeoutMs: TimeoutSchema.optional(),
+  progress: z.boolean().optional().describe(
+    "Overrides the progress global argument; false turns progress lines off",
+  ),
 };
 
 const TokensSchema = z.object({
@@ -278,6 +284,8 @@ export interface AgentRun {
   pathArg: string;
   cliArgs: string[];
   parse: (stdout: string) => StreamSummary;
+  /** One-line progress note for a stdout line (tool call, message), or null. */
+  progress?: (line: string) => string | null;
   model: string;
   toolProfile: ToolProfile;
   agent: string | null;
@@ -403,6 +411,15 @@ export async function runAgent(
       wallTimeoutMs: args.wallTimeoutMs ?? g.wallTimeoutMs,
       idleTimeoutMs: args.idleTimeoutMs ?? g.idleTimeoutMs,
       pathArg: run.pathArg,
+      onStdoutLine: run.progress && (args.progress ?? g.progress)
+        ? (line) => {
+          const note = run.progress!(line);
+          // The note goes in a field so braces in agent text are not placeholders.
+          if (note) {
+            ctx.logger.info("{id}: {note}", { id: invocationId, note });
+          }
+        }
+        : undefined,
     });
     attempt = judge(process, run.parse(process.stdout), requireJson);
     attempts.push({

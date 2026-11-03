@@ -19,7 +19,7 @@ import {
   type ToolProfile,
   TranscriptSchema,
 } from "../_lib/agent.ts";
-import { parseStream } from "./_lib/stream.ts";
+import { parseStream, progressOf } from "./_lib/stream.ts";
 
 /** Kiro agent written to ~/.kiro/agents for the readonly tool profile. */
 export const READONLY_AGENT_NAME = "swamp-agents-kiro-readonly";
@@ -156,6 +156,7 @@ function invoke(args: InvokeArgs, ctx: Ctx, requireJson: boolean) {
         effort: args.effort ?? null,
       }),
       parse: parseStream,
+      progress: progressOf,
       model,
       toolProfile,
       agent,
@@ -198,7 +199,7 @@ const lifetime = "30d" as const;
 /** Kiro CLI agent model. */
 export const model = {
   type: "@cachehit/agents/kiro",
-  version: "2026.10.27.2",
+  version: "2026.11.03.1",
   upgrades: [{
     toVersion: "2026.10.27.1",
     description:
@@ -208,6 +209,11 @@ export const model = {
     toVersion: "2026.10.27.2",
     description:
       "Adds costUsd and tokens to invocation records, shared with @cachehit/agents/claude; always null for Kiro",
+    upgradeAttributes: (old: Record<string, unknown>) => old,
+  }, {
+    toVersion: "2026.11.03.1",
+    description:
+      "Logs agent progress while a run is going; stored records are unchanged",
     upgradeAttributes: (old: Record<string, unknown>) => old,
   }],
   globalArguments: GlobalArgsSchema,
