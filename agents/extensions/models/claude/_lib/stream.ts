@@ -131,3 +131,35 @@ export function parseStream(stdout: string): StreamSummary {
   summary.text = result ?? chunks.join("");
   return summary;
 }
+
+const oneLine = (text: string, max: number) => {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max)}…` : flat;
+};
+
+/**
+ * A one-line progress note for one stream line: the tool calls and text of an
+ * assistant message, or null for every other event.
+ */
+export function progressOf(line: string): string | null {
+  if (!line.trim().startsWith("{")) return null;
+  let event: Json | undefined;
+  try {
+    event = obj(JSON.parse(line));
+  } catch {
+    return null;
+  }
+  if (event?.type !== "assistant") return null;
+  const content = obj(event.message)?.content;
+  const notes = (Array.isArray(content) ? content.map(obj) : []).flatMap(
+    (block) => {
+      if (block?.type === "tool_use") {
+        const title = toolTitle(obj(block.input));
+        return [`tool ${str(block.name) ?? "unknown"}: ${oneLine(title, 200)}`];
+      }
+      const text = block?.type === "text" ? str(block.text) : null;
+      return text?.trim() ? [`says: ${oneLine(text, 200)}`] : [];
+    },
+  );
+  return notes.length ? notes.join(" | ") : null;
+}

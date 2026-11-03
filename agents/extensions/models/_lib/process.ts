@@ -51,6 +51,8 @@ export async function runProcess(
     idleTimeoutMs: number;
     /** Global argument that sets `command`, named when it is not found. */
     pathArg: string;
+    /** Called with each complete stdout line as it arrives. */
+    onStdoutLine?: (line: string) => void;
   },
 ): Promise<ProcessResult> {
   const started = Date.now();
@@ -100,24 +102,42 @@ export async function runProcess(
   }, Math.min(opts.idleTimeoutMs, 1_000));
 
   const readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
-  const drain = async (stream: ReadableStream<Uint8Array>) => {
+  const drain = async (
+    stream: ReadableStream<Uint8Array>,
+    onLine?: (line: string) => void,
+  ) => {
     const reader = stream.getReader();
     readers.push(reader);
     const decoder = new TextDecoder();
     let text = "";
+    let lineStart = 0;
+    const emitLines = () => {
+      if (!onLine) return;
+      let end: number;
+      while ((end = text.indexOf("\n", lineStart)) !== -1) {
+        const line = text.slice(lineStart, end);
+        lineStart = end + 1;
+        try {
+          onLine(line);
+        } catch { /* progress reporting must never break the run */ }
+      }
+    };
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         lastActivity = Date.now();
         text += decoder.decode(value, { stream: true });
+        emitLines();
       }
     } catch {
       // Cancelled after exit; keep what was read.
     }
-    return text + decoder.decode();
+    text += decoder.decode();
+    emitLines();
+    return text;
   };
-  const stdout = drain(child.stdout);
+  const stdout = drain(child.stdout, opts.onStdoutLine);
   const stderr = drain(child.stderr);
 
   try {

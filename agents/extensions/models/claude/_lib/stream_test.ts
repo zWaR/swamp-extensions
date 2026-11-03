@@ -2,7 +2,7 @@
 
 import { assertAlmostEquals, assertEquals } from "jsr:@std/assert@1.0.19";
 import { classifyFailure } from "../../_lib/agent.ts";
-import { parseStream } from "./stream.ts";
+import { parseStream, progressOf } from "./stream.ts";
 
 const fixture = (name: string) =>
   Deno.readTextFile(new URL(`../testdata/${name}`, import.meta.url));
@@ -59,5 +59,30 @@ Deno.test("parseStream adds the API status and falls back to message text", () =
     )
       .error?.message,
     "error_max_turns",
+  );
+});
+
+Deno.test("progressOf notes tool calls and text, and skips other events", () => {
+  assertEquals(
+    progressOf(
+      '{"type":"assistant","message":{"content":[{"type":"text","text":"Checking\\n  logs"},{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"swamp data list"}}]}}',
+    ),
+    "says: Checking logs | tool Bash: swamp data list",
+  );
+  assertEquals(
+    progressOf(
+      '{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"x"}]}}',
+    ),
+    null,
+  );
+  assertEquals(progressOf('{"type":"result","subtype":"success"}'), null);
+  assertEquals(progressOf("not json"), null);
+  assertEquals(
+    progressOf(
+      `{"type":"assistant","message":{"content":[{"type":"text","text":"${
+        "a".repeat(300)
+      }"}]}}`,
+    )?.length,
+    "says: ".length + 201,
   );
 });

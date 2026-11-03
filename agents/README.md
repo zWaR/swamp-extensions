@@ -41,6 +41,7 @@ Global arguments of `@cachehit/agents/kiro`:
 | `idleTimeoutMs`      | `600000`   | Kill a run that writes no output for this long                                  |
 | `maxRetries`         | `2`        | Retries for rate limits, killed processes and unparseable JSON answers          |
 | `retryDelayMs`       | `5000`     | Base backoff; retry n waits n times this                                        |
+| `progress`           | `true`     | Log tool calls while a run is going; see [Watching progress](#watching-progress) |
 
 ## Methods
 
@@ -80,6 +81,7 @@ swamp model method run kiro invoke \
 | `tags`          | no       | Key-value labels stored with the run                                       |
 | `wallTimeoutMs` | no       | Overrides the global value for this run                                    |
 | `idleTimeoutMs` | no       | Overrides the global value for this run                                    |
+| `progress`      | no       | Overrides the global value for this run; `false` turns progress lines off  |
 
 ### `invokeAndParse`
 
@@ -98,7 +100,7 @@ swamp model method run kiro invokeAndParse \
 `@cachehit/agents/claude` runs `claude -p --output-format stream-json`. It has `invoke` and `invokeAndParse` with the
 arguments above except `agent`; Claude Code has no model list command, so there is no `listModels`. Its global arguments
 are `claudePath` (default `claude`), `defaultModel` (default `sonnet`) and the shared `defaultToolProfile`,
-`wallTimeoutMs`, `idleTimeoutMs`, `maxRetries` and `retryDelayMs`. `model` takes an alias (`haiku`, `sonnet`, `opus`) or
+`wallTimeoutMs`, `idleTimeoutMs`, `maxRetries`, `retryDelayMs` and `progress`. `model` takes an alias (`haiku`, `sonnet`, `opus`) or
 a full model ID.
 
 ```bash
@@ -180,6 +182,35 @@ Each `attempts` entry:
 
 Failure classes: `rate-limit`, `quota`, `auth`, `model-unavailable`, `timeout`, `contract-violation`, `infrastructure`,
 `unknown`. Only `rate-limit` and killed processes (exit 137 or 143) are retried unchanged.
+
+## Watching progress
+
+While a run is going, `invoke` and `invokeAndParse` log one info line per tool call the agent starts, prefixed with the
+invocation ID. Claude Code also logs each assistant message (first 200 characters). Kiro logs failed tool calls and
+run errors, but not message text, which it streams in word-sized chunks. Each run ends with the existing summary line.
+
+The lines are on by default and show in the terminal of `swamp model method run` and `swamp workflow run` without any
+extra flag:
+
+```text
+   work │ Running Claude Code opus (actor) in /repo as run-1-telemetry
+   work │ run-1-telemetry: tool Bash: swamp model method run logs-staging query --input …
+   work │ run-1-telemetry: says: The 30-day query matched 0 records.
+```
+
+Turn them off for one call with `--input progress=false`, or for every call of a model with the global argument:
+
+```bash
+swamp model method run claude invoke --input prompt="Summarise src/" --input progress=false
+swamp model create @cachehit/agents/claude claude --global-arg progress=false
+```
+
+In a workflow step, set `progress: false` in the step's `inputs`. `swamp workflow run --quiet` hides all info lines,
+progress included. A run started in the background still writes the lines to its run log:
+
+```bash
+tail -f .swamp/workflow-runs/<workflowId>/workflow-run-<runId>.log
+```
 
 ## Limitations
 

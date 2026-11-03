@@ -56,6 +56,7 @@ function context(globalArgs: Record<string, unknown>) {
       idleTimeoutMs: 30_000,
       maxRetries: 2,
       retryDelayMs: 0,
+      progress: true,
       ...globalArgs,
     },
   });
@@ -121,6 +122,45 @@ Deno.test("invokeAndParse sends the prompt on stdin and records cost and tokens"
   assertEquals(inv.toolCalls[0].name, "Read");
   assertEquals(inv.tags, { role: "worker" });
   assertEquals(written(list, "transcript").invocationId, "step-1");
+});
+
+Deno.test("invoke logs each tool call and message while the run is going", async () => {
+  const claude = await fakeClaude([{
+    stdout: await fixture("tool_call.jsonl"),
+  }]);
+  const { context: ctx, getLogs } = context({ claudePath: claude.script });
+  await model.methods.invoke.execute(
+    { prompt: "hi", invocationId: "step-2", tags: {} },
+    ctx,
+  );
+  const notes = getLogs()
+    .filter((l) => l.message === "{id}: {note}")
+    .map((l) => (l.args[0] as { id: string; note: string }));
+  assertEquals(notes.map((n) => n.id), ["step-2", "step-2"]);
+  assertEquals(notes.map((n) => n.note), [
+    "tool Read: /work/repo/a.txt",
+    'says: ```json {"content": "hello"} ```',
+  ]);
+});
+
+Deno.test("progress false turns the progress lines off, per call or globally", async () => {
+  const isNote = (l: { message: string }) => l.message === "{id}: {note}";
+  for (
+    const [globalProgress, callProgress] of [[true, false], [false, undefined]]
+  ) {
+    const claude = await fakeClaude([{
+      stdout: await fixture("tool_call.jsonl"),
+    }]);
+    const { context: ctx, getLogs } = context({
+      claudePath: claude.script,
+      progress: globalProgress,
+    });
+    await model.methods.invoke.execute(
+      { prompt: "hi", tags: {}, progress: callProgress },
+      ctx,
+    );
+    assertEquals(getLogs().filter(isNote), []);
+  }
 });
 
 Deno.test("invoke stores a bad model as model-unavailable without retrying", async () => {

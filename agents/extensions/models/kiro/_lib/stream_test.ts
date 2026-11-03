@@ -2,7 +2,7 @@
 
 import { assertAlmostEquals, assertEquals } from "jsr:@std/assert@1.0.19";
 import { classifyFailure } from "../../_lib/agent.ts";
-import { parseStream } from "./stream.ts";
+import { parseStream, progressOf } from "./stream.ts";
 
 const fixture = (name: string) =>
   Deno.readTextFile(new URL(`../testdata/${name}`, import.meta.url));
@@ -53,4 +53,20 @@ Deno.test("parseStream falls back to message chunks when finalText is truncated"
     '{"type":"runFinished","data":{"status":"success","finalText":"fu","finalTextTruncated":true}}',
   ];
   assertEquals(parseStream(lines.join("\n")).text, "full answer");
+});
+
+Deno.test("progressOf notes tool calls, failed tools and run errors only", async () => {
+  const notes = (await fixture("tool_call.jsonl")).split("\n").map(progressOf)
+    .filter((n) => n !== null);
+  assertEquals(notes, ["tool shell: Running: cat f.txt"]);
+  assertEquals(
+    progressOf(
+      '{"type":"sessionUpdate","data":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"t","status":"failed","title":"Reading a.txt","kind":"read"}}}',
+    ),
+    "tool failed read: Reading a.txt",
+  );
+  assertEquals(
+    progressOf('{"type":"runError","data":{"message":"throttled"}}'),
+    "error: throttled",
+  );
 });
