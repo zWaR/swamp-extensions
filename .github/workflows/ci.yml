@@ -37,8 +37,10 @@ jobs:
           done
 
   quality:
-    # Dependabot runs can't read Actions secrets; a skipped job still satisfies the required check
-    if: github.actor != 'dependabot[bot]'
+    # Needs a full-access swamp key, so it runs on main only and publish still waits for it.
+    # On PRs the job is skipped, which satisfies the required check.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: registry
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
